@@ -36,8 +36,8 @@ class CORDDataset(Dataset):
         self.processor = CORDProcessor()
         cached_features_file = os.path.join(
             cache_dir if cache_dir is not None else args.data_dir,
-            "cached_{}_{}_{}_{}".format(
-                tokenizer.__class__.__name__, str(args.max_seq_length), str(args.max_seq_length), str(args.max_tokens_per_batch),
+            "cached_{}_{}_{}".format(
+                tokenizer.__class__.__name__, str(args.max_seq_length), str(args.adaptive_sampler),
             ),
         )
 
@@ -57,10 +57,10 @@ class CORDDataset(Dataset):
                 examples,
                 tokenizer,
                 max_length=args.max_seq_length,
+                padding_strategy="do_not_pad" if args.adaptive_sampler else "max_length"
             )
             start = time.time()
             torch.save(self.features, cached_features_file)
-            # ^ This seems to take a lot of time so I want to investigate why and how we can improve.
             logger.info(
                 "Saving features into cached file %s [took %.3f s]", cached_features_file, time.time() - start
             )
@@ -91,14 +91,13 @@ class CORDProcessor(DataProcessor):
                 yield json.loads(line)
 
 def convert_examples_to_features(
-    examples: List[InputExample],
-    tokenizer: PreTrainedTokenizer,
-    max_length: Optional[int] = None,
+        examples: List[InputExample],
+        tokenizer: PreTrainedTokenizer,
+        max_length: Optional[int] = None,
+        padding_strategy: str = "max_length",
 ):
-    padding_strategy = "max_length"
     if max_length is None or max_length == -1:
         max_length = tokenizer.max_len
-        padding_strategy = "do_not_pad"
 
     batch_encoding = tokenizer(
         [(example.text_a) for example in examples],

@@ -18,7 +18,7 @@ TOP_N_WORDS = 100
 PAD_ID = 0
 
 def main(args):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
     tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased')
     model = BertForMaskedLM.from_pretrained('allenai/scibert_scivocab_uncased')
     model.to(device)
@@ -26,7 +26,10 @@ def main(args):
     dataloader = adaptive_dataloader(args, dataset) if args.adaptive_sampler else simple_dataloader(args, dataset)
     writer = csv.writer(open(args.alternatives_file, 'w'), delimiter='\t')
 
+    before = time()
+    total_num_of_tokens = 0
     for inputs in tqdm(dataloader):
+        total_num_of_tokens += inputs['input_ids'].numel()
         guids = inputs.pop('guid')
         with torch.no_grad():
             dict_to_device(inputs, device)
@@ -39,6 +42,8 @@ def main(args):
                 write_alternatives_to_file_loop_iteratively(guids, inputs, indices, probs, writer)
             else:
                 write_alternatives_to_file(guids, inputs, indices, probs, writer)
+
+    log_times(args, time() - before, total_num_of_tokens)
 
 def adaptive_dataloader(args, dataset):
     sampler = MaxTokensBatchSampler(dataset, max_tokens=args.max_tokens_per_batch, padding_noise=0.0)
@@ -77,7 +82,9 @@ def write_alternatives_to_file(guids, inputs, indices, probs, writer):
         writer.writerow([in_word, subs, short_probs])
 
 def write_alternatives_to_file_loop_iteratively(guids, inputs, indices, probs, writer):
-    """This style is not very pytorch like, but might be quicker"""
+    """This style is not very pytorch like,
+    This might be quicker when masks are mostly 1
+    """
     for sent_id, sent, sent_subs, sent_probs in zip(guids, inputs['input_ids'].tolist(), indices.tolist(), probs.tolist()):
         for in_word, subs, sub_probs in zip(sent, sent_subs, sent_probs):
             if in_word != PAD_ID:
@@ -89,14 +96,15 @@ def dict_to_device(inputs, device):
         if isinstance(v, torch.Tensor):
             inputs[k] = v.to(device)
 
-def log_times(args, time_took):
+def log_times(args, time_took, total_num_of_tokens):
     filename = os.path.join("benchmarks", f"timing_{str(time()).split('.')[0]}.txt")
     with open(filename, 'w') as f:
         f.write(os.path.basename(__file__).split('.')[0])
         for k, v in vars(args).items():
             f.write(f"{k}: {v}\n")
-        f.write(f"timing: {time_took}\n")
-    
+        f.write(f"Token per second: {total_num_of_tokens/time_took}\n")
+        f.write(f"Total hours: {time_took/60/60}\n")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
@@ -109,13 +117,12 @@ if __name__ == "__main__":
     parser.add_argument("--overwrite_cache", action="store_true")
     parser.add_argument("--adaptive_sampler", action="store_true")
     parser.add_argument("--iterativly_go_over_matrices", action="store_true")
-
+    parser.add_argument("--cpu", action="store_true")
 
     args = parser.parse_args()
     if args.adaptive_sampler:
         assert args.max_tokens_per_batch > 0 and \
             args.batch_size == 1 and \
-            args.max_seq_length == -1, \
             "Expecting arguments for adaptive sampler"
     else:
         assert args.max_tokens_per_batch == -1 and \
@@ -123,6 +130,4 @@ if __name__ == "__main__":
             args.max_seq_length > -1, \
             "Expecting arguments for simple sampler"
 
-    before = time()
     main(args)
-    log_times(args, time() - before)
