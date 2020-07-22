@@ -29,7 +29,7 @@ def main(args):
     before = time()
     total_num_of_tokens = 0
     for inputs in tqdm(dataloader):
-        total_num_of_tokens += inputs['input_ids'].numel()
+        total_num_of_tokens += inputs['attention_mask'].sum()
         guids = inputs.pop('guid')
         with torch.no_grad():
             dict_to_device(inputs, device)

@@ -75,7 +75,7 @@ class CORDDataset(Dataset):
 
 class CORDProcessor(DataProcessor):
     def get_examples(self, data_dir):
-        return self._create_examples(self._read_jsonl(os.path.join(data_dir, "raw-first-100.jsonl")))
+        return self._create_examples(self._read_jsonl(os.path.join(data_dir, "raw-first-100-docs.jsonl")))
 
     def _create_examples(self, lines):
         examples = []
