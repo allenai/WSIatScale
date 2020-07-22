@@ -37,15 +37,14 @@ def main(args):
     total_num_of_tokens = 0
     for inputs in tqdm(dataloader):
         total_num_of_tokens += inputs['attention_mask'].sum()
-        sent_offsets = inputs.pop('guid')
         with torch.no_grad():
             dict_to_device(inputs, device)
+            sent_offsets = inputs.pop('guid')
             last_hidden_states = model(**inputs)[0]
             normalized = last_hidden_states.softmax(-1)
             probs, indices = normalized.topk(TOP_N_WORDS)
 
             write_preds_to_file(outfiles, sent_offsets, inputs, indices, probs)
-            break
 
     log_times(args, time() - before, total_num_of_tokens)
     
@@ -90,12 +89,12 @@ def write_preds_to_file(outfiles, sent_offsets, inputs, preds, probs):
     b, l = inputs['input_ids'].size()
     attention_mask = inputs['attention_mask'].bool()
     
-    sent_offsets = sent_offsets.unsqueeze(1).expand((b, l)).masked_select(attention_mask)
-    word_offsets = torch.arange(0, l).repeat(b, 1).masked_select(attention_mask)
-    tokens = inputs['input_ids'].masked_select(attention_mask)
-    preds = preds.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS)
-    probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS)
-    for in_word, sent_offset, word_offset, subs, sub_probs in zip(tokens.numpy(), sent_offsets, word_offsets, preds.numpy(), probs.numpy()):
+    sent_offsets = sent_offsets.unsqueeze(1).expand((b, l)).masked_select(attention_mask).cpu().numpy()
+    word_offsets = torch.arange(0, l, device=attention_mask.device).repeat(b, 1).masked_select(attention_mask).cpu().numpy()
+    tokens = inputs['input_ids'].masked_select(attention_mask).cpu().numpy()
+    preds = preds.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy()
+    probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy()
+    for in_word, sent_offset, word_offset, subs, sub_probs in zip(tokens, sent_offsets, word_offsets, preds, probs):
         write(outfiles, in_word, sent_offset, word_offset, subs, sub_probs)
 
 def write(outfiles, in_word, sent_offset, word_offset, subs, sub_probs):
