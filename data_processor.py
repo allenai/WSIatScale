@@ -37,7 +37,7 @@ class CORDDataset(Dataset):
         cached_features_file = os.path.join(
             cache_dir if cache_dir is not None else args.data_dir,
             "cached_{}_{}_{}".format(
-                tokenizer.__class__.__name__, str(args.max_seq_length), str(args.adaptive_sampler),
+                tokenizer.__class__.__name__, str(args.max_seq_length), str(args.simple_sampler),
             ),
         )
 
@@ -57,7 +57,7 @@ class CORDDataset(Dataset):
                 examples,
                 tokenizer,
                 max_length=args.max_seq_length,
-                padding_strategy="do_not_pad" if args.adaptive_sampler else "max_length"
+                padding_strategy="max_length" if args.simple_sampler else "do_not_pad"
             )
             start = time.time()
             torch.save(self.features, cached_features_file)
