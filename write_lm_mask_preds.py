@@ -20,13 +20,25 @@ from apex import amp
 TOP_N_WORDS = 100
 PAD_ID = 0
 
+from collections import defaultdict
+TIMES = defaultdict(int)
+def timeit(f):
+    @wraps(f)
+    def wrap(*args, **kw):
+        ts = time()
+        result = f(*args, **kw)
+        te = time()
+        TIMES[f.__name__] += te-ts
+        return result
+    return wrap
+
 def main(args):
     outfiles = {'in_word': open(os.path.join(args.preds_dir, 'in_word.npy'), 'wb'),
                 'sent_offset': open(os.path.join(args.preds_dir, 'sent_offset.npy'), 'wb'),
                 'word_offset': open(os.path.join(args.preds_dir, 'word_offset.npy'), 'wb'),
                 'preds': open(os.path.join(args.preds_dir, 'preds.npy'), 'wb'),
                 'probs': open(os.path.join(args.preds_dir, 'probs.npy'), 'wb')}
-    
+
     device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
     tokenizer, model = initialize_models(device, args)
 
@@ -35,21 +47,34 @@ def main(args):
 
     before = time()
     total_num_of_tokens = 0
+    i = 0
     for inputs in tqdm(dataloader):
         total_num_of_tokens += inputs['attention_mask'].sum()
         with torch.no_grad():
             dict_to_device(inputs, device)
             sent_offsets = inputs.pop('guid')
-            last_hidden_states = model(**inputs)[0]
-            normalized = last_hidden_states.softmax(-1)
-            probs, indices = normalized.topk(TOP_N_WORDS)
+            last_hidden_states = lm_forward(model, inputs)
+            indices, probs = softmax_and_topk(last_hidden_states)
 
             write_preds_to_file(outfiles, sent_offsets, inputs, indices, probs)
+            i+=1
+            if i >1: break
 
     log_times(args, time() - before, total_num_of_tokens)
-    
+
     for f in outfiles.values():
         f.close()
+
+@timeit
+def lm_forward(model, inputs):
+    last_hidden_states = model(**inputs)[0]
+    return last_hidden_states
+
+@timeit
+def softmax_and_topk(last_hidden_states):
+    normalized = last_hidden_states.softmax(-1)
+    probs, indices = normalized.topk(TOP_N_WORDS)
+    return indices, probs
 
 def initialize_models(device, args):
     tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased')
@@ -85,24 +110,37 @@ def simple_dataloader(args, dataset):
     )
     return dataloader
 
+@timeit
 def write_preds_to_file(outfiles, sent_offsets, inputs, preds, probs):
     b, l = inputs['input_ids'].size()
     attention_mask = inputs['attention_mask'].bool()
-    
-    sent_offsets = sent_offsets.unsqueeze(1).expand((b, l)).masked_select(attention_mask).cpu().numpy()
-    word_offsets = torch.arange(0, l, device=attention_mask.device).repeat(b, 1).masked_select(attention_mask).cpu().numpy()
-    tokens = inputs['input_ids'].masked_select(attention_mask).cpu().numpy()
-    preds = preds.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy()
-    probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy()
+
+    sent_offsets = sent_offsets.unsqueeze(1).expand((b, l)).masked_select(attention_mask)
+    word_offsets = torch.arange(0, l, device=attention_mask.device).repeat(b, 1).masked_select(attention_mask)
+    tokens = inputs['input_ids'].masked_select(attention_mask)
+    preds = preds.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS)
+    probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS)
+
+    sent_offsets, word_offsets, tokens, preds, probs = to_numpy(sent_offsets, word_offsets, tokens, preds, probs)
+
     for in_word, sent_offset, word_offset, subs, sub_probs in zip(tokens, sent_offsets, word_offsets, preds, probs):
         write(outfiles, in_word, sent_offset, word_offset, subs, sub_probs)
 
+@timeit
+def to_numpy(sent_offsets, word_offsets, tokens, preds, probs):
+    return (sent_offsets.cpu().numpy().astype(np.int16),
+            word_offsets.cpu().numpy().astype(np.int32),
+            tokens.cpu().numpy().astype(np.int16),
+            preds.cpu().numpy().astype(np.int16),
+            probs.cpu().numpy().astype(np.float32))
+
+@timeit
 def write(outfiles, in_word, sent_offset, word_offset, subs, sub_probs):
-    np.save(outfiles['in_word'], np.array(in_word).astype(np.int16))
-    np.save(outfiles['sent_offset'], np.array(sent_offset).astype(np.int32))
-    np.save(outfiles['word_offset'], np.array(word_offset).astype(np.int16))
-    np.save(outfiles['preds'], subs.astype(np.int16))
-    np.save(outfiles['probs'], sub_probs.astype(np.float32))
+    np.save(outfiles['in_word'], in_word)
+    np.save(outfiles['sent_offset'], sent_offset)
+    np.save(outfiles['word_offset'], word_offset)
+    np.save(outfiles['preds'], subs)
+    np.save(outfiles['probs'], sub_probs)
 
 def dict_to_device(inputs, device):
     for k, v in inputs.items():
@@ -145,3 +183,5 @@ if __name__ == "__main__":
             "Expecting arguments for adaptive sampler"
 
     main(args)
+    TIMES['write_preds_to_file_just_masked_selects'] = TIMES['write_preds_to_file'] - TIMES['to_numpy'] - TIMES['to_numpy']
+    print(TIMES)
