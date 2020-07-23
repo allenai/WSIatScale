@@ -131,5 +131,5 @@ dmypy.json
 benchmarks
 alternatives.tsv
 .vscode/
-data/CORD-19/cached*
+data/CORD-19/
 preds/

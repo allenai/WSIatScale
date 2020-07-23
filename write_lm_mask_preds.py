@@ -52,7 +52,7 @@ def main(args):
         f.close()
 
 def initialize_models(device, args):
-    tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased')
+    tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
     model = BertForMaskedLM.from_pretrained('allenai/scibert_scivocab_uncased')
     model.to(device)
     if args.fp16:
