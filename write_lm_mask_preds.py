@@ -24,7 +24,7 @@ def main(args):
     outfiles = {'in_word': open(os.path.join(args.preds_dir, 'in_word.npy'), 'wb'),
                 'sent_offset': open(os.path.join(args.preds_dir, 'sent_offset.npy'), 'wb'),
                 'word_offset': open(os.path.join(args.preds_dir, 'word_offset.npy'), 'wb'),
-                'preds': open(os.path.join(args.preds_dir, 'preds.npy'), 'wb'),
+                'pred_ids': open(os.path.join(args.preds_dir, 'pred_ids.npy'), 'wb'),
                 'probs': open(os.path.join(args.preds_dir, 'probs.npy'), 'wb')}
     
     device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
@@ -57,7 +57,7 @@ def initialize_models(device, args):
     model.to(device)
     if args.fp16:
         model = amp.initialize(model, opt_level="O1")
-    assert tokenizer.vocab_size < 32767 #Saving subs as np.int16
+    assert tokenizer.vocab_size < 32767 # Saving pred_ids as np.int16
     return tokenizer, model
 
 def adaptive_dataloader(args, dataset):
@@ -85,24 +85,21 @@ def simple_dataloader(args, dataset):
     )
     return dataloader
 
-def write_preds_to_file(outfiles, sent_offsets, inputs, preds, probs):
+def write_preds_to_file(outfiles, sent_offsets, inputs, pred_ids, probs):
     b, l = inputs['input_ids'].size()
     attention_mask = inputs['attention_mask'].bool()
     
     sent_offsets = sent_offsets.unsqueeze(1).expand((b, l)).masked_select(attention_mask).cpu().numpy()
     word_offsets = torch.arange(0, l, device=attention_mask.device).repeat(b, 1).masked_select(attention_mask).cpu().numpy()
     tokens = inputs['input_ids'].masked_select(attention_mask).cpu().numpy()
-    preds = preds.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy()
+    pred_ids = pred_ids.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy()
     probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy()
-    for in_word, sent_offset, word_offset, subs, sub_probs in zip(tokens, sent_offsets, word_offsets, preds, probs):
-        write(outfiles, in_word, sent_offset, word_offset, subs, sub_probs)
 
-def write(outfiles, in_word, sent_offset, word_offset, subs, sub_probs):
-    np.save(outfiles['in_word'], np.array(in_word).astype(np.int16))
-    np.save(outfiles['sent_offset'], np.array(sent_offset).astype(np.int32))
-    np.save(outfiles['word_offset'], np.array(word_offset).astype(np.int16))
-    np.save(outfiles['preds'], subs.astype(np.int16))
-    np.save(outfiles['probs'], sub_probs.astype(np.float32))
+    np.save(outfiles['in_word'], np.array(tokens).astype(np.int16))
+    np.save(outfiles['sent_offset'], np.array(sent_offsets).astype(np.int32))
+    np.save(outfiles['word_offset'], np.array(word_offsets).astype(np.int16))
+    np.save(outfiles['pred_ids'], pred_ids.astype(np.int16))
+    np.save(outfiles['probs'], probs.astype(np.float16))
 
 def dict_to_device(inputs, device):
     for k, v in inputs.items():
