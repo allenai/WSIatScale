@@ -82,7 +82,7 @@ def initialize_models(device, args):
     model.to(device)
     if args.fp16:
         model = amp.initialize(model, opt_level="O1")
-    assert tokenizer.vocab_size < 32767 #Saving subs as np.int16
+    assert tokenizer.vocab_size < 32767 #Saving preds as np.int16
     return tokenizer, model
 
 def adaptive_dataloader(args, dataset):
@@ -123,8 +123,7 @@ def write_preds_to_file(outfiles, sent_offsets, inputs, preds, probs):
 
     sent_offsets, word_offsets, tokens, preds, probs = to_numpy(sent_offsets, word_offsets, tokens, preds, probs)
 
-    for in_word, sent_offset, word_offset, subs, sub_probs in zip(tokens, sent_offsets, word_offsets, preds, probs):
-        write(outfiles, in_word, sent_offset, word_offset, subs, sub_probs)
+    write(outfiles, tokens, sent_offsets, word_offsets, preds, probs)
 
 @timeit
 def to_numpy(sent_offsets, word_offsets, tokens, preds, probs):
@@ -135,12 +134,12 @@ def to_numpy(sent_offsets, word_offsets, tokens, preds, probs):
             probs.cpu().numpy().astype(np.float32))
 
 @timeit
-def write(outfiles, in_word, sent_offset, word_offset, subs, sub_probs):
+def write(outfiles, in_word, sent_offset, word_offset, preds, pred_probs):
     np.save(outfiles['in_word'], in_word)
     np.save(outfiles['sent_offset'], sent_offset)
     np.save(outfiles['word_offset'], word_offset)
-    np.save(outfiles['preds'], subs)
-    np.save(outfiles['probs'], sub_probs)
+    np.save(outfiles['preds'], preds)
+    np.save(outfiles['probs'], pred_probs)
 
 def dict_to_device(inputs, device):
     for k, v in inputs.items():
@@ -183,5 +182,5 @@ if __name__ == "__main__":
             "Expecting arguments for adaptive sampler"
 
     main(args)
-    TIMES['write_preds_to_file_just_masked_selects'] = TIMES['write_preds_to_file'] - TIMES['to_numpy'] - TIMES['to_numpy']
+    TIMES['write_preds_to_file_just_masked_selects'] = TIMES['write_preds_to_file'] - TIMES['to_numpy'] - TIMES['write']
     print(TIMES)
