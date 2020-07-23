@@ -21,9 +21,9 @@ TOP_N_WORDS = 100
 PAD_ID = 0
 
 def main(args):
-    outfiles = {'in_word': open(os.path.join(args.preds_dir, 'in_word.npy'), 'wb'),
-                'sent_offset': open(os.path.join(args.preds_dir, 'sent_offset.npy'), 'wb'),
-                'word_offset': open(os.path.join(args.preds_dir, 'word_offset.npy'), 'wb'),
+    outfiles = {'in_words': open(os.path.join(args.preds_dir, 'in_words.npy'), 'wb'),
+                'sent_ids': open(os.path.join(args.preds_dir, 'sent_ids.npy'), 'wb'),
+                'sent_lengths': open(os.path.join(args.preds_dir, 'sent_lengths.npy'), 'wb'),
                 'pred_ids': open(os.path.join(args.preds_dir, 'pred_ids.npy'), 'wb'),
                 'probs': open(os.path.join(args.preds_dir, 'probs.npy'), 'wb')}
     
@@ -39,12 +39,12 @@ def main(args):
         total_num_of_tokens += inputs['attention_mask'].sum()
         with torch.no_grad():
             dict_to_device(inputs, device)
-            sent_offsets = inputs.pop('guid')
+            sent_ids = inputs.pop('guid')
             last_hidden_states = model(**inputs)[0]
             normalized = last_hidden_states.softmax(-1)
             probs, indices = normalized.topk(TOP_N_WORDS)
 
-            write_preds_to_file(outfiles, sent_offsets, inputs, indices, probs)
+            write_preds_to_file(outfiles, sent_ids, inputs, indices, probs)
 
     log_times(args, time() - before, total_num_of_tokens)
     
@@ -85,21 +85,21 @@ def simple_dataloader(args, dataset):
     )
     return dataloader
 
-def write_preds_to_file(outfiles, sent_offsets, inputs, pred_ids, probs):
+def write_preds_to_file(outfiles, sent_ids, inputs, pred_ids, probs):
     b, l = inputs['input_ids'].size()
     attention_mask = inputs['attention_mask'].bool()
     
-    sent_offsets = sent_offsets.unsqueeze(1).expand((b, l)).masked_select(attention_mask).cpu().numpy()
-    word_offsets = torch.arange(0, l, device=attention_mask.device).repeat(b, 1).masked_select(attention_mask).cpu().numpy()
-    tokens = inputs['input_ids'].masked_select(attention_mask).cpu().numpy()
-    pred_ids = pred_ids.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy()
-    probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy()
+    sent_ids = sent_ids.cpu().numpy().astype(np.int32)
+    sent_lengths = inputs['attention_mask'].sum(0).cpu().numpy().astype(np.int16)
+    tokens = inputs['input_ids'].masked_select(attention_mask).cpu().numpy().astype(np.int16)
+    pred_ids = pred_ids.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy().astype(np.int16)
+    probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy().astype(np.float16)
 
-    np.save(outfiles['in_word'], np.array(tokens).astype(np.int16))
-    np.save(outfiles['sent_offset'], np.array(sent_offsets).astype(np.int32))
-    np.save(outfiles['word_offset'], np.array(word_offsets).astype(np.int16))
-    np.save(outfiles['pred_ids'], pred_ids.astype(np.int16))
-    np.save(outfiles['probs'], probs.astype(np.float16))
+    np.save(outfiles['sent_ids'], sent_ids)
+    np.save(outfiles['sent_lengths'], sent_lengths)
+    np.save(outfiles['in_words'], tokens)
+    np.save(outfiles['pred_ids'], pred_ids)
+    np.save(outfiles['probs'], probs)
 
 def dict_to_device(inputs, device):
     for k, v in inputs.items():
