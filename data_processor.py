@@ -50,7 +50,7 @@ class CORDDataset(Dataset):
         else:
             logger.info(f"Creating features from dataset file at {args.data_dir}")
 
-            examples = self.processor.get_examples(args.data_dir)
+            examples = self.processor.get_examples(args.data_dir, args.input_file)
             if limit_length is not None:
                 examples = examples[:limit_length]
             self.features = convert_examples_to_features(
@@ -74,8 +74,8 @@ class CORDDataset(Dataset):
         return self.features[x]
 
 class CORDProcessor(DataProcessor):
-    def get_examples(self, data_dir):
-        return self._create_examples(self._read_jsonl(os.path.join(data_dir, "raw-first-100-docs.jsonl")))
+    def get_examples(self, data_dir, input_file):
+        return self._create_examples(self._read_jsonl(os.path.join(data_dir, input_file)))
 
     def _create_examples(self, lines):
         examples = []
