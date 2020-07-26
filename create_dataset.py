@@ -60,6 +60,10 @@ def read_data_files(data_dir):
             yield (row[0], abstract_sents, full_body_sents)
 
 def merge_sents_and_write(file, tokenizer, cord_uid, section, sents):
+    for offset, text in merge_sents(tokenizer, sents):
+        write(file, cord_uid, section, offset, text)
+
+def merge_sents(tokenizer, sents):
     i = 0
     if len(sents) == 0: return
     encoding = tokenizer(
@@ -77,21 +81,21 @@ def merge_sents_and_write(file, tokenizer, cord_uid, section, sents):
     for i, (length, sent) in enumerate(zip(lengths, sents)):
         should_write = False
         batch_length += length
-        if batch_length <= MAX_LENGTH:
-            if len(lengths) > i+1 and (batch_length + lengths[i+1]) <= MAX_LENGTH:
-                if text is None:
-                    text = sent
-                else:
-                    text += f" {sent}"
-            else:
-                should_write = True
-        else:
+        if batch_length > MAX_LENGTH:
             should_write = True
-    
+        else:
+            if not (len(lengths) > i+1 and (batch_length + lengths[i+1]) <= MAX_LENGTH):
+                should_write = True
+
+        if text is None:
+            text = sent
+        else:
+            text += f" {sent}"
+
         if should_write:
-            write(file, cord_uid, section, offset, text)
+            yield offset, text
             batch_length = 0
-            text = ""
+            text = None
             offset += 1
 
 def write(file, cord_uid, section, offset, text):
@@ -112,6 +116,7 @@ def main(args):
     data = read_data_files(args.data_dir)
     tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
     write_data_to_jsonl(args.out_file, tokenizer, data)
+    print("Done")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

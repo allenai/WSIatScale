@@ -102,6 +102,7 @@ def write_preds_to_file(outfiles, sent_ids, inputs, pred_ids, probs):
     np.save(outfiles['probs'], probs)
 
 def dict_to_device(inputs, device):
+    if device.type == 'cpu': return
     for k, v in inputs.items():
         if isinstance(v, torch.Tensor):
             inputs[k] = v.to(device)
@@ -119,6 +120,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--data_dir", type=str, required=True)
+    parser.add_argument("--input_file", type=str, required=True)
     parser.add_argument("--preds_dir", type=str, default="preds")
     parser.add_argument("--local_rank", type=int, default=-1)
     parser.add_argument("--batch_size", type=int, default=1)
