@@ -15,8 +15,6 @@ from transformers import AutoTokenizer, BertForMaskedLM
 from adaptive_sampler import MaxTokensBatchSampler, data_collator_for_adaptive_sampler
 from data_processor import CORDDataset
 
-from apex import amp
-
 TOP_N_WORDS = 100
 PAD_ID = 0
 
@@ -30,21 +28,23 @@ def main(args):
     device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
     tokenizer, model = initialize_models(device, args)
 
-    dataset = CORDDataset(args, tokenizer)
-    dataloader = simple_dataloader(args, dataset) if args.simple_sampler else adaptive_dataloader(args, dataset)
+    similar_files = [f for f in os.listdir(args.data_dir) if f.startswith(args.input_file)]
+    for input_file in similar_files:
+        dataset = CORDDataset(args, input_file, tokenizer)
+        dataloader = simple_dataloader(args, dataset) if args.simple_sampler else adaptive_dataloader(args, dataset)
 
-    before = time()
-    total_num_of_tokens = 0
-    for inputs in tqdm(dataloader):
-        total_num_of_tokens += inputs['attention_mask'].sum()
-        with torch.no_grad():
-            dict_to_device(inputs, device)
-            sent_ids = inputs.pop('guid')
-            last_hidden_states = model(**inputs)[0]
-            normalized = last_hidden_states.softmax(-1)
-            probs, indices = normalized.topk(TOP_N_WORDS)
+        before = time()
+        total_num_of_tokens = 0
+        for inputs in tqdm(dataloader):
+            total_num_of_tokens += inputs['attention_mask'].sum()
+            with torch.no_grad():
+                dict_to_device(inputs, device)
+                sent_ids = inputs.pop('guid')
+                last_hidden_states = model(**inputs)[0]
+                normalized = last_hidden_states.softmax(-1)
+                probs, indices = normalized.topk(TOP_N_WORDS)
 
-            write_preds_to_file(outfiles, sent_ids, inputs, indices, probs)
+                write_preds_to_file(outfiles, sent_ids, inputs, indices, probs)
 
     log_times(args, time() - before, total_num_of_tokens)
     
@@ -56,6 +56,7 @@ def initialize_models(device, args):
     model = BertForMaskedLM.from_pretrained('allenai/scibert_scivocab_uncased')
     model.to(device)
     if args.fp16:
+        from apex import amp
         model = amp.initialize(model, opt_level="O1")
     assert tokenizer.vocab_size < 32767 # Saving pred_ids as np.int16
     return tokenizer, model

@@ -29,6 +29,7 @@ class CORDDataset(Dataset):
     def __init__(
         self,
         args,
+        input_file: str,
         tokenizer: PreTrainedTokenizer,
         limit_length: Optional[int] = None,
         cache_dir: Optional[str] = None,
@@ -37,7 +38,7 @@ class CORDDataset(Dataset):
         cached_features_file = os.path.join(
             cache_dir if cache_dir is not None else args.data_dir,
             "cached_{}_{}_{}_{}".format(
-                tokenizer.__class__.__name__, str(args.max_seq_length), str(args.simple_sampler), args.input_file
+                tokenizer.__class__.__name__, str(args.max_seq_length), str(args.simple_sampler), input_file
             ),
         )
 
@@ -50,7 +51,7 @@ class CORDDataset(Dataset):
         else:
             logger.info(f"Creating features from dataset file at {args.data_dir}")
 
-            examples = self.processor.get_examples(args.data_dir, args.input_file)
+            examples = self.processor.get_examples(args.data_dir, input_file)
             if limit_length is not None:
                 examples = examples[:limit_length]
             self.features = convert_examples_to_features(
