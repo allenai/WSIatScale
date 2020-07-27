@@ -36,8 +36,8 @@ class CORDDataset(Dataset):
         self.processor = CORDProcessor()
         cached_features_file = os.path.join(
             cache_dir if cache_dir is not None else args.data_dir,
-            "cached_{}_{}_{}".format(
-                tokenizer.__class__.__name__, str(args.max_seq_length), str(args.simple_sampler),
+            "cached_{}_{}_{}_{}".format(
+                tokenizer.__class__.__name__, str(args.max_seq_length), str(args.simple_sampler), args.input_file
             ),
         )
 
