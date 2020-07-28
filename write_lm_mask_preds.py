@@ -28,8 +28,8 @@ def main(args):
     device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
     tokenizer, model = initialize_models(device, args)
 
-    similar_files = [f for f in os.listdir(args.data_dir) if f.startswith(args.input_file)]
-    for input_file in similar_files:
+    similar_files = sorted([f for f in os.listdir(args.data_dir) if f.startswith(args.input_file)])
+    for input_file in tqdm(similar_files):
         dataset = CORDDataset(args, input_file, tokenizer)
         dataloader = simple_dataloader(args, dataset) if args.simple_sampler else adaptive_dataloader(args, dataset)
 
@@ -91,7 +91,7 @@ def write_preds_to_file(outfiles, sent_ids, inputs, pred_ids, probs):
     attention_mask = inputs['attention_mask'].bool()
     
     sent_ids = sent_ids.cpu().numpy().astype(np.int32)
-    sent_lengths = inputs['attention_mask'].sum(0).cpu().numpy().astype(np.int16)
+    sent_lengths = inputs['attention_mask'].sum(1).cpu().numpy().astype(np.int16)
     tokens = inputs['input_ids'].masked_select(attention_mask).cpu().numpy().astype(np.int16)
     pred_ids = pred_ids.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy().astype(np.int16)
     probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy().astype(np.float16)
