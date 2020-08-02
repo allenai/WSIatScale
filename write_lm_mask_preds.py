@@ -57,7 +57,7 @@ def initialize_models(device, args):
     model.to(device)
     if args.fp16:
         from apex import amp
-        model = amp.initialize(model, opt_level="O1")
+        model = amp.initialize(model, opt_level="O2")
     assert tokenizer.vocab_size < 32767 # Saving pred_ids as np.int16
     return tokenizer, model
 
@@ -123,13 +123,12 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--input_file", type=str, required=True)
     parser.add_argument("--preds_dir", type=str, default="preds")
-    parser.add_argument("--local_rank", type=int, default=-1)
+    parser.add_argument("--local_rank", type=int, default=-1, help="Not Maintained")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--max_seq_length", type=int, default=512)
     parser.add_argument("--max_tokens_per_batch", type=int, default=-1)
     parser.add_argument("--overwrite_cache", action="store_true")
     parser.add_argument("--simple_sampler", action="store_true")
-    parser.add_argument("--iterativly_go_over_matrices", action="store_true")
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--fp16", action="store_true")
 
