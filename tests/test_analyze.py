@@ -1,11 +1,13 @@
 import os
 import numpy as np
+import pytest
 
 from analyze import *
 from transformers import AutoTokenizer
 
 preds_dir = 'tests/stubs'
 
+@pytest.mark.skip(reason="Need to recreate stubs")
 def test_find_token_idx_in_row():
     token = 111 # vocab id for "the"
     with open(os.path.join(preds_dir, 'in_words.npy'), 'rb') as words_f:
@@ -14,6 +16,7 @@ def test_find_token_idx_in_row():
     assert all(token_idx_in_row[:7] == [5, 32, 60, 66, 78, 96, 99])
     assert len(token_idx_in_row) == 50
 
+@pytest.mark.skip(reason="Need to recreate stubs")
 def test_find_sents_with_token():
     token = 111 # vocab id for "have"
     with open(os.path.join(preds_dir, 'in_words.npy'), 'rb') as words_f, open(os.path.join(preds_dir, 'sent_lengths.npy'), 'rb') as lengths_f:

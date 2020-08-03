@@ -145,8 +145,10 @@ def find_single_sent_around_token(concated_sents, local_pos):
     if len(full_stops_indices) == 0:
         return concated_sents
     end_index = full_stops_indices.searchsorted(local_pos)
-    start, end = full_stops_indices[end_index-1]+1, full_stops_indices[end_index]+1
-    if end_index == 0: start = 0
+    start = full_stops_indices[end_index-1]+1 if end_index != 0 else 0
+    if end_index == len(full_stops_indices):
+        return concated_sents[start:]
+    end = full_stops_indices[end_index]+1
     return concated_sents[start:end]
 
 def print_bag_of_alters(args, bag_of_alters, tokenizer):
