@@ -80,33 +80,64 @@ def seek_and_load(file, preds_offset):
     file.seek(preds_offset)
     return np.load(file)
 
+class Jaccard:
+    def __init__(self):
+        self.matrix = None
+
+    def init_matrix(self, length):
+        self.matrix = np.zeros((length, length), dtype=np.float16)
+
+    def pairwise_distance(self, X):
+        length = len(X)
+        self.init_matrix(length)
+        for i in range(length):
+            for j in range(i+1, length):
+                distance = self.distance(X[i], X[j])
+                self.matrix[i, j] = distance
+                self.matrix[j, i] = distance
+
+        return self.matrix
+
+    def distance(self, x, y):
+        return 1 - self.similarity(x, y)
+
+    def similarity(self, x, y):
+        intersection = len(x.intersection(y))
+        union = len(x) + len(y) - intersection
+        return float(intersection) / union
+
 def cluster(args, bag_of_alters, tokenizer):
     top_n_to_cluster = args.top_n_to_cluster
     n_clusters = args.n_clusters
     distance_threshold = args.distance_threshold
 
-    x = [list(k) for k, _ in sorted(bag_of_alters.items(), key=lambda kv: len(kv[1]), reverse=True)[:top_n_to_cluster]]
-    jaccard_matrix = 1- pairwise_distances(x, metric=partial(jaccard_score, average='macro'))
+    sorted_bag_of_alters = [k for k, _ in \
+        sorted(bag_of_alters.items(), key=lambda kv: len(kv[1]), reverse=True)[:top_n_to_cluster]
+    ]
+    jaccard_matrix = Jaccard().pairwise_distance(sorted_bag_of_alters)
+
     clustering = AgglomerativeClustering(n_clusters=n_clusters,
                                          distance_threshold=distance_threshold,
                                          affinity='precomputed',
                                          linkage='average')
     clusters = clustering.fit_predict(jaccard_matrix)
     clustered_alters = defaultdict(list)
-    for c, alter in zip(clusters, x):
+    for c, alter in zip(clusters, sorted_bag_of_alters):
         clustered_alters[c].append(alter)
 
-    for i, alters in enumerate(clustered_alters.values()):
+    for i, cluster_alters in enumerate(clustered_alters.values()):
         print(f"Cluster {i}:")
-        for alter in alters:
-            print(tokenizer.decode(alter))
+        for alters in cluster_alters:
+            print(tokenizer.decode(list(alters)))
         print()
 
 def populate_bag_of_alters(args, bag_of_alters, sent_and_positions, preds):
     for sent, token_pos_in_sent, global_token_pos in sent_and_positions:
         for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
             single_sent = find_single_sent_around_token(sent, local_pos)
-            bag_of_alters[frozenset(preds[global_pos][:args.n_alters])].append(single_sent)
+            key = frozenset(preds[global_pos][:args.n_alters])
+            value = single_sent
+            bag_of_alters[key].append(value)
 
 def find_single_sent_around_token(concated_sents, local_pos):
     full_stop_token = 205
