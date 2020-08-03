@@ -142,6 +142,8 @@ def populate_bag_of_alters(args, bag_of_alters, sent_and_positions, preds):
 def find_single_sent_around_token(concated_sents, local_pos):
     full_stop_token = 205
     full_stops_indices = np.where(concated_sents == full_stop_token)[0]
+    if len(full_stops_indices) == 0:
+        return concated_sents
     end_index = full_stops_indices.searchsorted(local_pos)
     start, end = full_stops_indices[end_index-1]+1, full_stops_indices[end_index]+1
     if end_index == 0: start = 0
