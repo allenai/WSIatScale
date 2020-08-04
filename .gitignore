@@ -133,4 +133,5 @@ alternatives.tsv
 .vscode/
 data/CORD-19/
 preds/
+cache/
 tests/stubs
