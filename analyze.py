@@ -1,16 +1,13 @@
 import argparse
 from collections import defaultdict
 from enum import Enum
-from functools import partial
 import numpy as np
 import os
 import termplotlib as tpl
 from tqdm import tqdm
 
 from sklearn.cluster import AgglomerativeClustering
-from sklearn.metrics import jaccard_score
-from sklearn.metrics.pairwise import pairwise_distances
-    
+
 from transformers import AutoTokenizer
 NUM_PREDS = 100
 
@@ -21,64 +18,6 @@ class Color(Enum):
 
     def __str__(self):
         return f"{self.value}"
-
-def main(args):
-    tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
-    if args.cluster or args.report_alters_diversity:
-        bag_of_alters = defaultdict(list)
-
-    token = tokenizer.encode(args.word, add_special_tokens=False)
-    if len(token) > 1:
-        raise Exception('Word given is more than a single wordpiece.')
-    with open(os.path.join(args.preds_dir, 'in_words.npy'), 'rb') as words_f, \
-         open(os.path.join(args.preds_dir, 'sent_lengths.npy'), 'rb') as lengths_f, \
-         open(os.path.join(args.preds_dir, 'pred_ids.npy'), 'rb') as preds_f, \
-         open(os.path.join(args.preds_dir, 'probs.npy'), 'rb') as probs_f:
-
-        fsz = os.fstat(words_f.fileno()).st_size
-        pbar = tqdm(total=fsz+1)
-        
-        prev_words_offset = 0
-        preds_offset = 0
-        n_matches = 0
-
-        while words_f.tell() < fsz:
-            tokens = np.load(words_f)
-            lengths = np.load(lengths_f)
-            
-            token_idx_in_row = find_token_idx_in_row(tokens, token)
-            n_matches += len(token_idx_in_row)
-
-            if len(token_idx_in_row) != 0:
-                preds = seek_and_load(preds_f, preds_offset)
-                probs = seek_and_load(probs_f, preds_offset)
-
-                sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths))
-
-                if args.print:
-                    print_sents_with_token(args, tokenizer, sent_and_positions, preds, probs)
-                if args.cluster or args.report_alters_diversity:
-                    populate_bag_of_alters(args, bag_of_alters, sent_and_positions, preds)
-            
-            preds_offset += tokens.shape[0] * 2 * NUM_PREDS + 128
-
-            pbar.update(words_f.tell()-prev_words_offset)
-            prev_words_offset = words_f.tell()
-            
-            if args.stop_after_n_matches is not None and args.stop_after_n_matches < n_matches:
-                break
-        
-        if args.report_alters_diversity:
-            print_bag_of_alters(args, bag_of_alters, tokenizer)
-
-        if args.cluster:
-            cluster(args, bag_of_alters, tokenizer)
-
-        pbar.close()
-
-def seek_and_load(file, preds_offset):
-    file.seek(preds_offset)
-    return np.load(file)
 
 class Jaccard:
     def __init__(self):
@@ -105,6 +44,80 @@ class Jaccard:
         intersection = len(x.intersection(y))
         union = len(x) + len(y) - intersection
         return float(intersection) / union
+
+def main(args):
+    tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
+
+    token = tokenizer.encode(args.word, add_special_tokens=False)
+    if len(token) > 1:
+        raise Exception('Word given is more than a single wordpiece.')
+
+    cache_file = os.path.join(args.cache_dir, f"{args.word}_{args.n_alters}_{args.stop_after_n_matches}.npy")
+    bag_of_alters = (
+        np.load(cache_file, allow_pickle=True).item() if os.path.exists(cache_file)
+        else read_files(args, tokenizer, token, cache_file)
+    )
+
+    if args.report_alters_diversity:
+        print_bag_of_alters(args, bag_of_alters, tokenizer)
+
+    if args.cluster:
+        cluster(args, bag_of_alters, tokenizer)
+
+def read_files(args, tokenizer, token, cache_file):
+    bag_of_alters = defaultdict(list)
+
+    with open(os.path.join(args.preds_dir, 'in_words.npy'), 'rb') as words_f, \
+         open(os.path.join(args.preds_dir, 'sent_lengths.npy'), 'rb') as lengths_f, \
+         open(os.path.join(args.preds_dir, 'pred_ids.npy'), 'rb') as preds_f, \
+         open(os.path.join(args.preds_dir, 'probs.npy'), 'rb') as probs_f:
+
+        fsz = os.fstat(words_f.fileno()).st_size
+        pbar = tqdm(total=fsz+1)
+
+        prev_words_offset = 0
+        preds_offset = 0
+        n_matches = 0
+
+        while words_f.tell() < fsz:
+            tokens = np.load(words_f)
+            lengths = np.load(lengths_f)
+
+            token_idx_in_row = find_token_idx_in_row(tokens, token)
+            n_matches += len(token_idx_in_row)
+
+            if len(token_idx_in_row) != 0:
+                preds = seek_and_load(preds_f, preds_offset)
+                probs = seek_and_load(probs_f, preds_offset)
+
+                sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths))
+
+                if args.print:
+                    print_sents_with_token(args, tokenizer, sent_and_positions, preds, probs)
+                populate_bag_of_alters(args, bag_of_alters, sent_and_positions, preds)
+
+            preds_offset += tokens.shape[0] * 2 * NUM_PREDS + 128
+
+            pbar.update(words_f.tell()-prev_words_offset)
+            prev_words_offset = words_f.tell()
+
+            if args.stop_after_n_matches is not None and args.stop_after_n_matches < n_matches:
+                break
+
+        save_to_cache(bag_of_alters, cache_file)
+    pbar.close()
+
+    return bag_of_alters
+
+def save_to_cache(bag_of_alters, cache_file):
+    cache_dir = '/'.join(cache_file.split('/')[:-1])
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    np.save(cache_file, bag_of_alters)
+
+def seek_and_load(file, preds_offset):
+    file.seek(preds_offset)
+    return np.load(file)
 
 def cluster(args, bag_of_alters, tokenizer):
     top_n_to_cluster = args.top_n_to_cluster
@@ -206,6 +219,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--preds_dir", type=str, default="preds")
+    parser.add_argument("--cache_dir", type=str, default="cache")
     parser.add_argument("--word", type=str, required=True)
     parser.add_argument("--n_alters", type=int, required=True)
     parser.add_argument("--stop_after_n_matches", type=int, default=None)
@@ -216,7 +230,7 @@ if __name__ == "__main__":
     parser.add_argument("--cluster", action='store_true')
     parser.add_argument("--top_n_to_cluster", type=int, default=100)
     parser.add_argument("--n_clusters", type=int)
-    parser.add_argument("--distance_threshold", type=int)
+    parser.add_argument("--distance_threshold", type=float)
 
     args = parser.parse_args()
     assert args.print or args.report_alters_diversity or args.cluster, \
@@ -226,5 +240,11 @@ if __name__ == "__main__":
         assert (args.n_clusters is not None or args.distance_threshold is not None) \
             and (args.n_clusters is None or args.distance_threshold is None), \
             "Pass one of `n_clusters` and `distance_threshold`"
+
+    if args.print:
+        print("Warning:\n"\
+              "This is deprecated. I don't think there's use for this anymore.\n"\
+              "`report_alters_diversity` is more powerful.\n"
+              "Additionaly, this will not work if the data is already cached.")
 
     main(args)
