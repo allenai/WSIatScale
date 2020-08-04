@@ -52,21 +52,22 @@ def main(args):
     if len(token) > 1:
         raise Exception('Word given is more than a single wordpiece.')
 
-    cache_file = os.path.join(args.cache_dir, f"{args.word}_{args.n_alters}_{args.stop_after_n_matches}.npy")
-    bag_of_alters = (
-        np.load(cache_file, allow_pickle=True).item() if os.path.exists(cache_file)
-        else read_files(args, tokenizer, token, cache_file)
-    )
+    cache_dir = os.path.join(args.cache_dir, f"{args.word}_{args.stop_after_n_matches}/")
+    if not os.path.exists(cache_dir):
+        found_rows_iter = look_for_rows_with_token(args, token)
+        cache_rows(cache_dir, found_rows_iter)
+    if not args.just_cache:
+        rows_iter = load_cache_iter(cache_dir)
 
-    if args.report_alters_diversity:
-        print_bag_of_alters(args, bag_of_alters, tokenizer)
+        bag_of_alters = analyze(args, rows_iter, tokenizer, token)
 
-    if args.cluster:
-        cluster(args, bag_of_alters, tokenizer)
+        if args.report_alters_diversity:
+            print_bag_of_alters(args, bag_of_alters, tokenizer)
 
-def read_files(args, tokenizer, token, cache_file):
-    bag_of_alters = defaultdict(list)
+        if args.cluster:
+            cluster(args, bag_of_alters, tokenizer)
 
+def look_for_rows_with_token(args, token):
     with open(os.path.join(args.preds_dir, 'in_words.npy'), 'rb') as words_f, \
          open(os.path.join(args.preds_dir, 'sent_lengths.npy'), 'rb') as lengths_f, \
          open(os.path.join(args.preds_dir, 'pred_ids.npy'), 'rb') as preds_f, \
@@ -90,30 +91,74 @@ def read_files(args, tokenizer, token, cache_file):
                 preds = seek_and_load(preds_f, preds_offset)
                 probs = seek_and_load(probs_f, preds_offset)
 
-                sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths))
-
-                if args.print:
-                    print_sents_with_token(args, tokenizer, sent_and_positions, preds, probs)
-                populate_bag_of_alters(args, bag_of_alters, sent_and_positions, preds)
+                yield tokens, lengths, preds, probs
 
             preds_offset += tokens.shape[0] * 2 * NUM_PREDS + 128
 
             pbar.update(words_f.tell()-prev_words_offset)
             prev_words_offset = words_f.tell()
 
-            if args.stop_after_n_matches is not None and args.stop_after_n_matches < n_matches:
+            if args.stop_after_n_matches != -1 and args.stop_after_n_matches < n_matches:
                 break
 
-        save_to_cache(bag_of_alters, cache_file)
     pbar.close()
 
-    return bag_of_alters
+def load_cache_iter(cache_dir):
+    with open(os.path.join(cache_dir, 'in_words.npy'), 'rb') as words_f, \
+         open(os.path.join(cache_dir, 'sent_lengths.npy'), 'rb') as lengths_f, \
+         open(os.path.join(cache_dir, 'pred_ids.npy'), 'rb') as preds_f, \
+         open(os.path.join(cache_dir, 'probs.npy'), 'rb') as probs_f:
 
-def save_to_cache(bag_of_alters, cache_file):
-    cache_dir = '/'.join(cache_file.split('/')[:-1])
+        fsz = os.fstat(words_f.fileno()).st_size
+        pbar = tqdm(total=fsz+1)
+
+        prev_words_offset = 0
+        preds_offset = 0
+
+        while words_f.tell() < fsz:
+            tokens = np.load(words_f)
+            lengths = np.load(lengths_f)
+
+            preds = seek_and_load(preds_f, preds_offset)
+            probs = seek_and_load(probs_f, preds_offset)
+
+            yield tokens, lengths, preds, probs
+
+            preds_offset += tokens.shape[0] * 2 * NUM_PREDS + 128
+
+            pbar.update(words_f.tell()-prev_words_offset)
+            prev_words_offset = words_f.tell()
+
+        pbar.close()
+
+def cache_rows(cache_dir, found_rows_iter):
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
-    np.save(cache_file, bag_of_alters)
+
+    cache_files = {'in_words': open(os.path.join(cache_dir, 'in_words.npy'), 'wb'),
+                    'sent_lengths': open(os.path.join(cache_dir, 'sent_lengths.npy'), 'wb'),
+                    'pred_ids': open(os.path.join(cache_dir, 'pred_ids.npy'), 'wb'),
+                    'probs': open(os.path.join(cache_dir, 'probs.npy'), 'wb')}
+
+    for tokens, lengths, preds, probs in found_rows_iter:
+        np.save(cache_files['in_words'], tokens)
+        np.save(cache_files['sent_lengths'], lengths)
+        np.save(cache_files['pred_ids'], preds)
+        np.save(cache_files['probs'], probs)
+
+def analyze(args, rows_iter, tokenizer, token):
+    bag_of_alters = defaultdict(list)
+
+    for tokens, lengths, preds, probs in rows_iter:
+        token_idx_in_row = find_token_idx_in_row(tokens, token)
+        sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths))
+
+        if args.print:
+            print_sents_with_token(args, tokenizer, sent_and_positions, preds, probs)
+        if args.report_alters_diversity or args.cluster:
+            populate_bag_of_alters(args, bag_of_alters, sent_and_positions, preds)
+
+    return bag_of_alters
 
 def seek_and_load(file, preds_offset):
     file.seek(preds_offset)
@@ -221,30 +266,33 @@ if __name__ == "__main__":
     parser.add_argument("--preds_dir", type=str, default="preds")
     parser.add_argument("--cache_dir", type=str, default="cache")
     parser.add_argument("--word", type=str, required=True)
-    parser.add_argument("--n_alters", type=int, required=True)
-    parser.add_argument("--stop_after_n_matches", type=int, default=None)
+    parser.add_argument("--n_alters", type=int)
+    parser.add_argument("--stop_after_n_matches", type=int, default=-1)
     parser.add_argument("--print", action='store_true')
     parser.add_argument("--report_alters_diversity", action='store_true')
     parser.add_argument("--n_bow_alters_to_report", type=int, default=10, help="How many different alternatives to report")
     parser.add_argument("--n_sents_to_print", type=int, default=2, help="Num sents to prin for report_alters_diversity")
     parser.add_argument("--cluster", action='store_true')
     parser.add_argument("--top_n_to_cluster", type=int, default=100)
-    parser.add_argument("--n_clusters", type=int)
-    parser.add_argument("--distance_threshold", type=float)
+    parser.add_argument("--n_clusters", type=int, help="The number of clusters to find.")
+    parser.add_argument("--distance_threshold", type=float, help="The linkage distance threshold above which, clusters will not be merged.")
+    parser.add_argument("--just_cache", action='store_true')
 
     args = parser.parse_args()
-    assert args.print or args.report_alters_diversity or args.cluster, \
+    assert args.print or args.report_alters_diversity or args.cluster or args.just_cache, \
         "At least one of `print`, `report_alters_diversity` `cluster` should be available"
+
+    if args.just_cache:
+        assert not (args.print or args.report_alters_diversity or args.cluster), \
+            print("When just_caching, do not pass any of the other action arguments.")
+
+    if (args.report_alters_diversity or args.cluster):
+        assert args.n_alters is not None, \
+            "`--n_alters` is required"
 
     if args.cluster:
         assert (args.n_clusters is not None or args.distance_threshold is not None) \
             and (args.n_clusters is None or args.distance_threshold is None), \
             "Pass one of `n_clusters` and `distance_threshold`"
-
-    if args.print:
-        print("Warning:\n"\
-              "This is deprecated. I don't think there's use for this anymore.\n"\
-              "`report_alters_diversity` is more powerful.\n"
-              "Additionaly, this will not work if the data is already cached.")
 
     main(args)
