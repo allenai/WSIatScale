@@ -1,6 +1,5 @@
 import argparse
 import os
-from time import time
 
 import numpy as np
 import torch
@@ -22,15 +21,13 @@ def main(args):
     device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
     tokenizer, model = initialize_models(device, args)
 
+    i = 0
     similar_files = sorted([f for f in os.listdir(args.data_dir) if f.startswith(args.input_file)])
     for input_file in tqdm(similar_files):
         dataset = CORDDataset(args, input_file, tokenizer)
         dataloader = simple_dataloader(args, dataset) if args.simple_sampler else adaptive_dataloader(args, dataset)
 
-        before = time()
-        total_num_of_tokens = 0
-        for i, inputs in enumerate(tqdm(dataloader)):
-            total_num_of_tokens += inputs['attention_mask'].sum()
+        for inputs in tqdm(dataloader):
             with torch.no_grad():
                 dict_to_device(inputs, device)
                 sent_ids = inputs.pop('guid')
@@ -39,8 +36,7 @@ def main(args):
                 probs, indices = normalized.topk(TOP_N_WORDS)
 
                 write_replacements_to_file(f"{args.out_dir}/{i}.npz", sent_ids, inputs, indices, probs)
-
-    log_times(args, time() - before, total_num_of_tokens)
+            i += 1
 
 def initialize_models(device, args):
     tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
@@ -100,15 +96,6 @@ def dict_to_device(inputs, device):
     for k, v in inputs.items():
         if isinstance(v, torch.Tensor):
             inputs[k] = v.to(device)
-
-def log_times(args, time_took, total_num_of_tokens):
-    filename = os.path.join("benchmarks", f"timing_{str(time()).split('.')[0]}.txt")
-    with open(filename, 'w') as f:
-        f.write(os.path.basename(__file__).split('.')[0])
-        for k, v in vars(args).items():
-            f.write(f"{k}: {v}\n")
-        f.write(f"Token per second: {total_num_of_tokens/time_took}\n")
-        f.write(f"Total hours: {time_took/60/60}\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
