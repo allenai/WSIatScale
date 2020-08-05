@@ -1,8 +1,8 @@
 import argparse
-from functools import wraps
-import numpy as np
 import os
 from time import time
+
+import numpy as np
 import torch
 from tqdm import tqdm
 
@@ -19,12 +19,6 @@ TOP_N_WORDS = 100
 PAD_ID = 0
 
 def main(args):
-    outfiles = {'in_words': open(os.path.join(args.preds_dir, 'in_words.npy'), 'wb'),
-                'sent_ids': open(os.path.join(args.preds_dir, 'sent_ids.npy'), 'wb'),
-                'sent_lengths': open(os.path.join(args.preds_dir, 'sent_lengths.npy'), 'wb'),
-                'pred_ids': open(os.path.join(args.preds_dir, 'pred_ids.npy'), 'wb'),
-                'probs': open(os.path.join(args.preds_dir, 'probs.npy'), 'wb')}
-    
     device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
     tokenizer, model = initialize_models(device, args)
 
@@ -35,7 +29,7 @@ def main(args):
 
         before = time()
         total_num_of_tokens = 0
-        for inputs in tqdm(dataloader):
+        for i, inputs in enumerate(tqdm(dataloader)):
             total_num_of_tokens += inputs['attention_mask'].sum()
             with torch.no_grad():
                 dict_to_device(inputs, device)
@@ -44,12 +38,9 @@ def main(args):
                 normalized = last_hidden_states.softmax(-1)
                 probs, indices = normalized.topk(TOP_N_WORDS)
 
-                write_preds_to_file(outfiles, sent_ids, inputs, indices, probs)
+                write_replacements_to_file(f"{args.out_dir}/{i}.npz", sent_ids, inputs, indices, probs)
 
     log_times(args, time() - before, total_num_of_tokens)
-    
-    for f in outfiles.values():
-        f.close()
 
 def initialize_models(device, args):
     tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
@@ -86,21 +77,23 @@ def simple_dataloader(args, dataset):
     )
     return dataloader
 
-def write_preds_to_file(outfiles, sent_ids, inputs, pred_ids, probs):
+def write_replacements_to_file(outfile, sent_ids, inputs, replacements, probs):
     b, l = inputs['input_ids'].size()
     attention_mask = inputs['attention_mask'].bool()
-    
+
     sent_ids = sent_ids.cpu().numpy().astype(np.int32)
     sent_lengths = inputs['attention_mask'].sum(1).cpu().numpy().astype(np.int16)
     tokens = inputs['input_ids'].masked_select(attention_mask).cpu().numpy().astype(np.int16)
-    pred_ids = pred_ids.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy().astype(np.int16)
+    replacements = replacements.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy().astype(np.int16)
     probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy().astype(np.float16)
 
-    np.save(outfiles['sent_ids'], sent_ids)
-    np.save(outfiles['sent_lengths'], sent_lengths)
-    np.save(outfiles['in_words'], tokens)
-    np.save(outfiles['pred_ids'], pred_ids)
-    np.save(outfiles['probs'], probs)
+    np.savez(outfile,
+        sent_ids=sent_ids,
+        sent_lengths=sent_lengths,
+        tokens=tokens,
+        replacements=replacements,
+        probs=probs,
+    )
 
 def dict_to_device(inputs, device):
     if device.type == 'cpu': return
@@ -122,7 +115,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--input_file", type=str, required=True)
-    parser.add_argument("--preds_dir", type=str, default="preds")
+    parser.add_argument("--out_dir", type=str, default="replacements")
     parser.add_argument("--local_rank", type=int, default=-1, help="Not Maintained")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--max_seq_length", type=int, default=512)
@@ -142,5 +135,8 @@ if __name__ == "__main__":
         assert args.max_tokens_per_batch > 0 and \
             args.batch_size == 1 and \
             "Expecting arguments for adaptive sampler"
+
+    if not os.path.exists(args.out_dir):
+        os.makedirs(args.out_dir)
 
     main(args)
