@@ -1,5 +1,5 @@
 import argparse
-from collections import defaultdict
+from collections import defaultdict, Counter
 from enum import Enum
 import json
 import os
@@ -54,7 +54,7 @@ def main(args):
         raise Exception('Word given is more than a single wordpiece.')
     token = token[0]
     files = inverted_index(args, token)
-    if args.sample_n_files:
+    if args.sample_n_files > 0:
         files = sample(files, args.sample_n_files)
 
     bag_of_reps = read_files(files, tokenizer, token)
@@ -97,8 +97,7 @@ def cluster(args, bag_of_reps, tokenizer):
     distance_threshold = args.distance_threshold
 
     sorted_bag_of_reps = [k for k, _ in \
-        sorted(bag_of_reps.items(), key=lambda kv: len(kv[1]), reverse=True)[:top_n_to_cluster]
-    ]
+        sorted(bag_of_reps.items(), key=lambda kv: len(kv[1]), reverse=True)[:top_n_to_cluster]]
     jaccard_matrix = Jaccard().pairwise_distance(sorted_bag_of_reps)
 
     clustering = AgglomerativeClustering(n_clusters=n_clusters,
@@ -110,10 +109,22 @@ def cluster(args, bag_of_reps, tokenizer):
     for c, rep in zip(clusters, sorted_bag_of_reps):
         clustered_reps[c].append(rep)
 
-    for i, cluster_reps in enumerate(clustered_reps.values()):
-        print(f"Cluster {i}:")
+    print_clusters(tokenizer, clustered_reps)
+
+def print_clusters(tokenizer, clustered_reps):
+    clustered_reps = sorted(clustered_reps.values(), key = lambda x: len(x), reverse=True)
+    for i, cluster_reps in enumerate(clustered_reps):
+        counter = Counter()
+        print(f"Cluster {i}: Found total {len(cluster_reps)} matches")
         for reps in cluster_reps:
-            print(tokenizer.decode(list(reps)))
+            for rep in reps:
+                counter[rep] += 1
+        counter = counter.most_common()
+        counter = [(tokenizer.decode([t]), c) for t, c in counter]
+        keys, values = zip(*counter)
+        fig = tpl.figure()
+        fig.barh(values, keys, max_width=min(max(values), 120))
+        fig.show()
         print()
 
 def print_bag_of_reps(args, bag_of_reps, tokenizer):

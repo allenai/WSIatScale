@@ -16,7 +16,7 @@ def main(args):
     words = [w.rstrip() for w in words]
 
     tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
-    words_tokens = tokenizer(words, add_special_tokens=False)['input_ids']
+    words_tokens = tokenizer.encode(words, add_special_tokens=False)
     words_tokens = [t[0] for t in words_tokens if len(t) == 1]
 
     all_files = sorted(os.listdir(args.replacements_dir), key=lambda k: int(k.split('.')[0]))
