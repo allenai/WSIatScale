@@ -4,6 +4,7 @@ import json
 import os
 
 import numpy as np
+from tqdm import tqdm
 
 from transformers import AutoTokenizer
 
@@ -19,7 +20,7 @@ def main(args):
     words_tokens = [t[0] for t in words_tokens if len(t) == 1]
 
     all_files = sorted(os.listdir(args.replacements_dir), key=lambda k: int(k.split('.')[0]))
-    for filename in all_files:
+    for filename in tqdm(all_files):
         npzfile = np.load(os.path.join(args.replacements_dir, filename))
         file_tokens = npzfile['tokens']
         for in_word in words_tokens:

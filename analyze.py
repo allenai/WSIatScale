@@ -3,6 +3,7 @@ from collections import defaultdict
 from enum import Enum
 import json
 import os
+from random import sample, seed
 
 import numpy as np
 import termplotlib as tpl
@@ -53,6 +54,8 @@ def main(args):
         raise Exception('Word given is more than a single wordpiece.')
     token = token[0]
     files = inverted_index(args, token)
+    if args.sample_n_files:
+        files = sample(files, args.sample_n_files)
 
     bag_of_reps = read_files(files, tokenizer, token)
 
@@ -63,6 +66,7 @@ def main(args):
         cluster(args, bag_of_reps, tokenizer)
 
 def read_files(files, tokenizer, token):
+    n_matches = 0
     if args.cluster or args.report_reps_diversity:
         bag_of_reps = defaultdict(list)
 
@@ -82,6 +86,9 @@ def read_files(files, tokenizer, token):
         if args.cluster or args.report_reps_diversity:
             populate_bag_of_reps(args, bag_of_reps, sent_and_positions, reps)
 
+        n_matches += len(token_idx_in_row)
+
+    print(f"Found Total of {n_matches} Matches in {len(files)} Files.")
     return bag_of_reps
 
 def cluster(args, bag_of_reps, tokenizer):
@@ -191,7 +198,7 @@ if __name__ == "__main__":
     parser.add_argument("--word", type=str, required=True)
     parser.add_argument("--inverted_index", type=str, required=True)
     parser.add_argument("--n_reps", type=int, required=True)
-    parser.add_argument("--stop_after_n_matches", type=int, default=None) #TODO
+    parser.add_argument("--sample_n_files", type=int)
     parser.add_argument("--print", action='store_true')
     parser.add_argument("--report_reps_diversity", action='store_true')
     parser.add_argument("--n_bow_reps_to_report", type=int, default=10, help="How many different replacements to report")
@@ -199,7 +206,8 @@ if __name__ == "__main__":
     parser.add_argument("--cluster", action='store_true')
     parser.add_argument("--top_n_to_cluster", type=int, default=100)
     parser.add_argument("--n_clusters", type=int)
-    parser.add_argument("--distance_threshold", type=int)
+    parser.add_argument("--distance_threshold", type=float)
+    parser.add_argument("--seed", type=int, default=0)
 
     args = parser.parse_args()
     assert args.print or args.report_reps_diversity or args.cluster, \
@@ -210,4 +218,5 @@ if __name__ == "__main__":
             and (args.n_clusters is None or args.distance_threshold is None), \
             "Pass one of `n_clusters` and `distance_threshold`"
 
+    seed(args.seed)
     main(args)
