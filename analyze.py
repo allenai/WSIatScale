@@ -107,8 +107,8 @@ def cluster(args, bag_of_reps, tokenizer):
                                          linkage='average')
     clusters = clustering.fit_predict(jaccard_matrix)
     clustered_reps = defaultdict(list)
-    for c, alter in zip(clusters, sorted_bag_of_reps):
-        clustered_reps[c].append(alter)
+    for c, rep in zip(clusters, sorted_bag_of_reps):
+        clustered_reps[c].append(rep)
 
     for i, cluster_reps in enumerate(clustered_reps.values()):
         print(f"Cluster {i}:")
