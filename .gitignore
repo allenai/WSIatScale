@@ -129,8 +129,9 @@ dmypy.json
 .pyre/
 
 benchmarks
-alternatives.tsv
 .vscode/
-data/CORD-19/
-preds/
+data/
+replacements/
 tests/stubs
+inverted_index.json
+words

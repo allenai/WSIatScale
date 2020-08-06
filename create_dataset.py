@@ -46,12 +46,21 @@ def read_full_body(file_path):
             body += split_to_sents(paragraph)
         return body
 
+def csv_length(path):
+    with open(path, 'r') as file:
+        reader = csv.reader(file)
+        return sum(1 for row in reader)-1
+
 def read_data_files(data_dir):
-    with open(os.path.join(data_dir, 'metadata.csv'), 'r') as file:
+    csv_path = os.path.join(data_dir, 'metadata.csv')
+    with open(csv_path, 'r') as file:
         reader = csv.reader(file)
         next(reader)
-        for row in tqdm(reader):
+        for row in tqdm(reader, total=csv_length(csv_path)):
+            full_body_sents = None
             abstract_sents = split_to_sents(row[8])
+            if len(abstract_sents) == 0:
+                continue
             pdf_json_files = row[15]
             if pdf_json_files:
                 pdf_json_files = pdf_json_files.split(';')[0]
@@ -110,7 +119,8 @@ def write_data_to_jsonl(out_path, tokenizer, data):
     with open(out_path, 'w') as file:
         for cord_uid, abstract_sents, full_body_sents in data:
             merge_sents_and_write(file, tokenizer, cord_uid, 'abstract', abstract_sents)
-            merge_sents_and_write(file, tokenizer, cord_uid, 'body', full_body_sents)
+            if full_body_sents:
+                merge_sents_and_write(file, tokenizer, cord_uid, 'body', full_body_sents)
 
 def main(args):
     data = read_data_files(args.data_dir)
