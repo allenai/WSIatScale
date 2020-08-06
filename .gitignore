@@ -133,3 +133,5 @@ benchmarks
 data/
 replacements/
 tests/stubs
+inverted_index.json
+words
