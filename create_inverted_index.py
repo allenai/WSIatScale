@@ -16,7 +16,7 @@ def main(args):
     words = [w.rstrip() for w in words]
 
     tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
-    words_tokens = tokenizer.encode(words, add_special_tokens=False)
+    words_tokens = tokenizer(words, add_special_tokens=False)['input_ids']
     words_tokens = [t[0] for t in words_tokens if len(t) == 1]
 
     all_files = sorted(os.listdir(args.replacements_dir), key=lambda k: int(k.split('.')[0]))
@@ -24,11 +24,23 @@ def main(args):
         npzfile = np.load(os.path.join(args.replacements_dir, filename))
         file_tokens = npzfile['tokens']
         for in_word in words_tokens:
-            if in_word in file_tokens:
+            valid_positions = []
+            for pos in np.where(file_tokens == in_word)[0]:
+                if full_word(tokenizer, file_tokens, pos):
+                    valid_positions.append(int(pos))
+            if len(valid_positions) > 0:
                 file_id = filename.split('.')[0]
-                index[in_word].append(file_id)
+                index[in_word].append([file_id, valid_positions])
 
     json.dump(dict(index), open(args.outfile, 'w'))
+
+def full_word(tokenizer, file_tokens, pos):
+    if pos + 1 == len(file_tokens):
+        return True
+    if tokenizer.decode([file_tokens[pos + 1]]).startswith('##'):
+        return False
+
+    return True
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
