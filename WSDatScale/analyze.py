@@ -43,6 +43,7 @@ class Jaccard:
         return 1 - self.similarity(x, y)
 
     def similarity(self, x, y):
+        x, y = set(x), set(y)
         intersection = len(x.intersection(y))
         union = len(x) + len(y) - intersection
         return float(intersection) / union
@@ -82,16 +83,11 @@ class ClusterFactory():
             words_in_cluster = [(tokenizer.decode([t]), c) for t, c in words_in_cluster]
 
             yield words_in_cluster, sorted_average_sents[i], msg
-            # keys, values = zip(*words_in_cluster)
-            # fig = tpl.figure()
-            # fig.barh(values, keys, max_width=int(120*(max(values)/max_length)+1))
-            # fig.show()
-            # for sent in sorted_average_sents[i]:
-            #     print(f"{Color.orange}Example:{Color.back_to_white} {tokenizer.decode(sent)}")
-            # print()
 
         if show_top_n_clusters < len(sorted_clustered_reps):
-            print(f"There are additional {len(sorted_clustered_reps) - show_top_n_clusters} that are not displayed.")
+            msg = {'header': f"There are additional {len(sorted_clustered_reps) - show_top_n_clusters} that are not displayed.",
+                   'found': ''}
+            yield None, None, msg
 
 class MyKMeans(sk_cluster.KMeans, ClusterFactory):
     def __init__(self, args):
@@ -156,17 +152,17 @@ class MyDBSCAN(sk_cluster.DBSCAN, ClusterFactory):
         non_outlier_clustered_reps = {i: clustered_reps[i] for i in range(num_classes_without_outliers)}
         non_outlier_cluster_sents = [cluster_sents[i] for i in range(num_classes_without_outliers)]
         if len(non_outlier_clustered_reps) > 0:
-            generators.append(ClusterFactory.group_for_display(args, tokenizer, non_outlier_clustered_reps, non_outlier_cluster_sents))
+            generator = ClusterFactory.group_for_display(args, tokenizer, non_outlier_clustered_reps, non_outlier_cluster_sents)
+            for (words_in_cluster, sents, msg) in generator:
+                yield (words_in_cluster, sents, msg)
 
         if -1 in clustered_reps:
             outlier_clustered_reps = {0: clustered_reps[-1]}
             outlier_cluster_sents = [cluster_sents[-1]]
-            generators.append(ClusterFactory.group_for_display(args, tokenizer, outlier_clustered_reps, outlier_cluster_sents))
+            generator = ClusterFactory.group_for_display(args, tokenizer, outlier_clustered_reps, outlier_cluster_sents)
 
-        for i, g in enumerate(generators):
-            for (msg, words_in_cluster, sents) in g:
-                if len(generators) == i+1:
-                    msg['header'] = "Outliers Cluster"
+            for (words_in_cluster, sents, msg) in generator:
+                msg['header'] = "Outliers Cluster"
                 yield (words_in_cluster, sents, msg)
 
 def tokenize(tokenizer, word):
@@ -178,7 +174,7 @@ def tokenize(tokenizer, word):
 
 def read_files(args, tokenizer, token, bar=tqdm):
     files_with_pos = read_inverted_index(args, token)
-    if args.sample_n_files > 0:
+    if args.sample_n_files > 0 and len(files_with_pos) > args.sample_n_files:
         files_with_pos = sample(files_with_pos, args.sample_n_files)
 
     n_matches = 0
@@ -192,10 +188,6 @@ def read_files(args, tokenizer, token, bar=tqdm):
         reps = data['replacements']
 
         sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths))
-
-        if args.print:
-            probs = data['probs']
-            print_sents_with_token(args, tokenizer, sent_and_positions, reps, probs)
 
         populate_bag_of_reps(args, bag_of_reps, sent_and_positions, reps)
 
@@ -216,38 +208,22 @@ def cluster(args, bag_of_reps, tokenizer):
     representative_sents = clustering.representative_sents(clusters, sorted_bag_of_reps, jaccard_matrix, args.n_sents_to_print)
     clustering.group_for_display(args, tokenizer, clustered_reps, representative_sents)
 
-def print_bag_of_reps(args, bag_of_reps, tokenizer):
-    n_sents_to_print = args.n_sents_to_print
-    n_bow_reps_to_report = args.n_bow_reps_to_report
-
-    for k, sent_and_positions in sorted(bag_of_reps.items(), key=lambda kv: len(kv[1]), reverse=True)[:n_bow_reps_to_report]:
-        print(f"{Color.orange}{tokenizer.decode(list(k))} - {len(sent_and_positions)}{Color.back_to_white}")
-        for sent in sent_and_positions[:n_sents_to_print]:
-            print(tokenizer.decode(sent))
-        print()
-
-    reps_to_num = defaultdict(int)
-    for _, v in bag_of_reps.items():
-        reps_to_num[len(v)] += 1
-
-    keys, values = zip(*sorted(reps_to_num.items(), key=lambda kv: kv[0], reverse=True))
-    if len(keys) > n_bow_reps_to_report:
-        keys = keys[:int(n_bow_reps_to_report/2)] + keys[-int(n_bow_reps_to_report/2):]
-        values = values[:int(n_bow_reps_to_report/2)] + values[-int(n_bow_reps_to_report/2):]
-
-    print(f"Top {int(n_bow_reps_to_report/2)} and bottom {int(n_bow_reps_to_report/2)}")
-    print(f"{values[0]} replacement/s appear/s {keys[0]} time/s.")
-    fig = tpl.figure()
-    fig.barh(list(values), keys)
-    fig.show()
-
 def populate_bag_of_reps(args, bag_of_reps, sent_and_positions, reps):
     for sent, token_pos_in_sent, global_token_pos in sent_and_positions:
         for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
             single_sent = find_single_sent_around_token(sent, local_pos)
-            key = frozenset(reps[global_pos][:args.n_reps])
+            key = tuple(reps[global_pos])
             value = single_sent
             bag_of_reps[key].append(value)
+
+def bag_in_size(bag_of_all_reps, n_reps):
+    bag_of_reps = defaultdict(list)
+    for key, sents in bag_of_all_reps.items():
+        new_key = key[:n_reps]
+        for sent in sents:
+            bag_of_reps[new_key].append(sent)
+
+    return bag_of_reps
 
 def find_single_sent_around_token(concated_sents, local_pos):
     full_stop_token = 205
@@ -260,22 +236,6 @@ def find_single_sent_around_token(concated_sents, local_pos):
         return concated_sents[start:]
     end = full_stops_indices[end_index]+1
     return concated_sents[start:end]
-
-#TODO deprecated?
-def print_sents_with_token(args, tokenizer, sent_and_positions, reps, probs):
-    for sent, token_pos_in_sent, global_token_pos in sent_and_positions:
-        splits = np.split(sent, token_pos_in_sent)
-        out = tokenizer.decode(splits[0])
-        for i, split in enumerate(splits[1:]):
-            if out:
-                out += ' '
-            out += f"{Color.green}({i}) {args.word}{Color.back_to_white} " + tokenizer.decode(split[1:])
-        for i, global_pos in enumerate(global_token_pos):
-            out += f"\n{Color.orange}({i}):"
-            for rep, prob in zip(reps[global_pos, :args.n_reps], probs[global_pos, :args.n_reps]):
-                out += f" {tokenizer.decode([rep])}-{prob:.5f}"
-            out += str(Color.back_to_white)
-        print(out)
 
 def find_sent_and_positions(token_idx_in_row, tokens, lengths):
     token_idx_in_row = np.array(token_idx_in_row)
@@ -292,17 +252,14 @@ def read_inverted_index(args, token):
         raise ValueError('token is not in inverted index. Dynamically indexing will be available soon.')
     return index[str(token)]
 
-
 def prepare_arguments():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--replacements_dir", type=str, default="data/replacements")
+    parser.add_argument("--replacements_dir", type=str, default="data/replacements/done")
     parser.add_argument("--word", type=str, default='race')
     parser.add_argument("--inverted_index", type=str, default='data/inverted_index.json')
     parser.add_argument("--n_reps", type=int, default=5)
-    parser.add_argument("--sample_n_files", type=int, default=-1)
-    parser.add_argument("--print", action='store_true') #TODO deprecated?
-    parser.add_argument("--report_reps_diversity", action='store_true')
+    parser.add_argument("--sample_n_files", type=int, default=1000)
     parser.add_argument("--n_bow_reps_to_report", type=int, default=10, help="How many different replacements to report")
     parser.add_argument("--n_sents_to_print", type=int, default=2, help="Num sents to print")
     parser.add_argument("--show_top_n_clusters", type=int, default=10)
@@ -321,9 +278,6 @@ def prepare_arguments():
     return args
 
 def assert_arguments(args):
-    assert args.print or args.report_reps_diversity or args.cluster_alg is not None, \
-        "At least one of `print`, `report_reps_diversity` `cluster` should be available"
-
     if args.cluster_alg == 'kmeans':
         assert args.n_clusters is not None, \
             "kmeans requires --n_clusters"
@@ -340,11 +294,8 @@ def main(args):
     tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
     token = tokenize(tokenizer, args.word)
 
-    bag_of_reps = read_files(args, tokenizer, token)
-
-    #TODO deprecated?
-    if args.report_reps_diversity:
-        print_bag_of_reps(args, bag_of_reps, tokenizer)
+    bag_of_all_reps = read_files(args, tokenizer, token)
+    bag_of_reps = bag_in_size(bag_of_all_reps, args.n_reps)
 
     if args.cluster_alg is not None:
         cluster(args, bag_of_reps, tokenizer)
