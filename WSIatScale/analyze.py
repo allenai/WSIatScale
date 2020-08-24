@@ -5,21 +5,45 @@ import json
 import os
 from random import sample, seed
 
+from efficient_apriori import apriori, itemsets_from_transactions
 import numpy as np
-import termplotlib as tpl
 from tqdm import tqdm
 
 from sklearn import cluster as sk_cluster
 from sklearn.metrics import pairwise_distances
 from transformers import AutoTokenizer
 
-class Color(Enum):
-    green = '\x1b[32m'
-    orange = '\x1b[33m'
-    back_to_white = '\x1b[00m'
+MAX_REPS = 100
+class RepsToInstances:
+    def __init__(self):
+        self.data = defaultdict(list)
 
-    def __str__(self):
-        return f"{self.value}"
+    def populate(self, sent_and_positions, reps):
+        for sent, token_pos_in_sent, global_token_pos in sent_and_positions:
+            for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
+                single_sent = find_single_sent_around_token(sent, local_pos)
+                key = tuple(reps[global_pos])
+                value = single_sent
+                self.data[key].append(value)
+
+    def populate_specific_size(self, n_reps):
+        if n_reps == MAX_REPS:
+            return self
+
+        reps_to_instances = RepsToInstances()
+        for key, sents in self.data.items():
+            new_key = key[:n_reps]
+            for sent in sents:
+                reps_to_instances.data[new_key].append(sent)
+
+        return reps_to_instances
+
+    def merge(self, other):
+        for key, sents in other.data.items():
+            if key not in self.data:
+                self.data[key] = sents
+            else:
+                self.data[key].append(sents)
 
 class Jaccard:
     def __init__(self):
@@ -56,9 +80,9 @@ class ClusterFactory():
         if alg_name == 'agglomerative_clustering': return MyAgglomerativeClustering(*args, **kwargs)
         if alg_name == 'dbscan': return MyDBSCAN(*args, **kwargs)
 
-    def reps_to_their_clusters(self, clusters, sorted_bag_of_reps):
+    def reps_to_their_clusters(self, clusters, sorted_reps_to_instances_data):
         clustered_reps = {i: [] for i in self.clusters_range(clusters)}
-        for c, rep_with_examples in zip(clusters, sorted_bag_of_reps):
+        for c, rep_with_examples in zip(clusters, sorted_reps_to_instances_data):
             clustered_reps[c].append(rep_with_examples)
 
         return clustered_reps
@@ -94,13 +118,13 @@ class MyKMeans(sk_cluster.KMeans, ClusterFactory):
         self.n_clusters = args.n_clusters
         super().__init__(n_clusters=self.n_clusters, random_state=args.seed)
 
-    def representative_sents(self, clusters, sorted_bag_of_reps, distance_matrix, n_sents_to_print):
+    def representative_sents(self, clusters, sorted_reps_to_instances_data, distance_matrix, n_sents_to_print):
         cluster_sents = [[] for _ in self.clusters_range(clusters)]
         closest_centers = np.argsort(pairwise_distances(self.cluster_centers_, distance_matrix))
         for i, closest_sents in enumerate(closest_centers):
             for c in closest_sents:
                 if clusters[c] == i:
-                    cluster_sents[i].append(sorted_bag_of_reps[c]['examples'][0])
+                    cluster_sents[i].append(sorted_reps_to_instances_data[c]['examples'][0])
                 if len(cluster_sents[i]) == n_sents_to_print:
                     break
         return cluster_sents
@@ -116,12 +140,12 @@ class MyAgglomerativeClustering(sk_cluster.AgglomerativeClustering, ClusterFacto
                          affinity=args.affinity,
                          linkage=args.linkage)
 
-    def representative_sents(self, clusters, sorted_bag_of_reps, distance_matrix, n_sents_to_print):
+    def representative_sents(self, clusters, sorted_reps_to_instances_data, _, n_sents_to_print):
         cluster_sents = [[] for _ in self.clusters_range(clusters)]
         for i, c in enumerate(clusters):
             if len(cluster_sents[c]) == n_sents_to_print:
                 continue
-            cluster_sents[c].append(sorted_bag_of_reps[i]['examples'][0])
+            cluster_sents[c].append(sorted_reps_to_instances_data[i]['examples'][0])
 
         return cluster_sents
     
@@ -132,13 +156,13 @@ class MyDBSCAN(sk_cluster.DBSCAN, ClusterFactory):
     def __init__(self, args):
         super().__init__(eps=args.eps, min_samples=args.min_samples)
 
-    def representative_sents(self, clusters, sorted_bag_of_reps, distance_matrix, n_sents_to_print):
+    def representative_sents(self, clusters, sorted_reps_to_instances_data, _, n_sents_to_print):
         #TODO can I find a way to get the central ones!?
         cluster_sents = {i:[] for i in self.clusters_range(clusters)}
         for i, c in enumerate(clusters):
             if len(cluster_sents[c]) == n_sents_to_print:
                 continue
-            cluster_sents[c].append(sorted_bag_of_reps[i]['examples'][0])
+            cluster_sents[c].append(sorted_reps_to_instances_data[i]['examples'][0])
 
         return cluster_sents
 
@@ -172,16 +196,16 @@ def tokenize(tokenizer, word):
     token = token[0]
     return token
 
-def read_files(args, tokenizer, token, bar=tqdm):
-    files_with_pos = read_inverted_index(args, token)
-    if args.sample_n_files > 0 and len(files_with_pos) > args.sample_n_files:
-        files_with_pos = sample(files_with_pos, args.sample_n_files)
+def read_files(token, replacements_dir, inverted_index, sample_n_files, bar=tqdm) -> RepsToInstances:
+    files_with_pos = read_inverted_index(inverted_index, token)
+    if sample_n_files > 0 and len(files_with_pos) > sample_n_files:
+        files_with_pos = sample(files_with_pos, sample_n_files)
 
     n_matches = 0
-    bag_of_reps = defaultdict(list)
+    reps_to_instances = RepsToInstances()
 
     for file, token_idx_in_row in bar(files_with_pos):
-        data = np.load(os.path.join(args.replacements_dir, f"{file}.npz"))
+        data = np.load(os.path.join(replacements_dir, f"{file}.npz"))
 
         tokens = data['tokens']
         lengths = data['sent_lengths']
@@ -189,41 +213,24 @@ def read_files(args, tokenizer, token, bar=tqdm):
 
         sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths))
 
-        populate_bag_of_reps(args, bag_of_reps, sent_and_positions, reps)
+        reps_to_instances.populate(sent_and_positions, reps)
 
         n_matches += len(token_idx_in_row)
 
     msg = f"Found Total of {n_matches} Matches in {len(files_with_pos)} Files."
-    return bag_of_reps, msg
+    return reps_to_instances, msg
 
-def cluster(args, bag_of_reps, tokenizer):
-    sorted_bag_of_reps = [{'reps': k, 'examples': v} for k, v in sorted(bag_of_reps.items(), key=lambda kv: len(kv[1]), reverse=True)]
-    jaccard_matrix = Jaccard().pairwise_distance([x['reps'] for x in sorted_bag_of_reps])
+def cluster(args, reps_to_instances, tokenizer):
+    sorted_reps_to_instances_data = [{'reps': k, 'examples': v} for k, v in sorted(reps_to_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
+    jaccard_matrix = Jaccard().pairwise_distance([x['reps'] for x in sorted_reps_to_instances_data])
 
     clustering = ClusterFactory.make(args.cluster_alg, args)
     clusters = clustering.fit_predict(jaccard_matrix)
 
-    clustered_reps = clustering.reps_to_their_clusters(clusters, sorted_bag_of_reps)
+    clustered_reps = clustering.reps_to_their_clusters(clusters, sorted_reps_to_instances_data)
 
-    representative_sents = clustering.representative_sents(clusters, sorted_bag_of_reps, jaccard_matrix, args.n_sents_to_print)
+    representative_sents = clustering.representative_sents(clusters, sorted_reps_to_instances_data, jaccard_matrix, args.n_sents_to_print)
     clustering.group_for_display(args, tokenizer, clustered_reps, representative_sents)
-
-def populate_bag_of_reps(args, bag_of_reps, sent_and_positions, reps):
-    for sent, token_pos_in_sent, global_token_pos in sent_and_positions:
-        for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
-            single_sent = find_single_sent_around_token(sent, local_pos)
-            key = tuple(reps[global_pos])
-            value = single_sent
-            bag_of_reps[key].append(value)
-
-def bag_in_size(bag_of_all_reps, n_reps):
-    bag_of_reps = defaultdict(list)
-    for key, sents in bag_of_all_reps.items():
-        new_key = key[:n_reps]
-        for sent in sents:
-            bag_of_reps[new_key].append(sent)
-
-    return bag_of_reps
 
 def find_single_sent_around_token(concated_sents, local_pos):
     full_stop_token = 205
@@ -246,8 +253,8 @@ def find_sent_and_positions(token_idx_in_row, tokens, lengths):
             yield tokens[length_sum:length_sum + length], token_location-length_sum, token_location
         length_sum += length
 
-def read_inverted_index(args, token):
-    index = json.load(open(args.inverted_index, 'r'))
+def read_inverted_index(inverted_index, token):
+    index = json.load(open(inverted_index, 'r'))
     if str(token) not in index:
         raise ValueError('token is not in inverted index. Dynamically indexing will be available soon.')
     return index[str(token)]
@@ -262,7 +269,7 @@ def prepare_arguments():
     parser.add_argument("--sample_n_files", type=int, default=1000)
     parser.add_argument("--n_bow_reps_to_report", type=int, default=10, help="How many different replacements to report")
     parser.add_argument("--n_sents_to_print", type=int, default=2, help="Num sents to print")
-    parser.add_argument("--show_top_n_clusters", type=int, default=10)
+    parser.add_argument("--show_top_n_clusters", type=int, default=20)
     parser.add_argument("--show_top_n_words_per_cluster", type=int, default=100)
 
     parser.add_argument("--cluster_alg", type=str, default=None, choices=['kmeans', 'agglomerative_clustering', 'dbscan'])
@@ -277,6 +284,11 @@ def prepare_arguments():
 
     return args
 
+def run_apriori(reps_to_instances, min_support):
+    keys = reps_to_instances.data.keys() #TODO, need to augment with the real count (num of length)
+    itemsets = itemsets_from_transactions(keys, min_support=min_support)
+    return itemsets
+
 def assert_arguments(args):
     if args.cluster_alg == 'kmeans':
         assert args.n_clusters is not None, \
@@ -289,20 +301,3 @@ def assert_arguments(args):
             "dbscan requires either --eps or --min_samples"
         assert args.n_clusters is None, \
             "dbscan doesn't need --n_clusters"
-
-def main(args):
-    tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
-    token = tokenize(tokenizer, args.word)
-
-    bag_of_all_reps = read_files(args, tokenizer, token)
-    bag_of_reps = bag_in_size(bag_of_all_reps, args.n_reps)
-
-    if args.cluster_alg is not None:
-        cluster(args, bag_of_reps, tokenizer)
-
-if __name__ == "__main__":
-    args = prepare_arguments()
-    assert_arguments(args)
-
-    seed(args.seed)
-    main(args)
