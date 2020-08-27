@@ -80,7 +80,7 @@ def merge_sents(tokenizer, sents):
         max_length=512,
         padding="do_not_pad",
         truncation=True,
-        add_special_tokens=False
+        add_special_tokens=True
     )
     lengths = [len(x) for x in encoding['input_ids']]
 
@@ -124,7 +124,7 @@ def write_data_to_jsonl(out_path, tokenizer, data):
 
 def main(args):
     data = read_data_files(args.data_dir)
-    tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_hg_path, use_fast=True)
     write_data_to_jsonl(args.out_file, tokenizer, data)
     print("Done")
 
@@ -133,5 +133,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--out_file", type=str, required=True)
+    parser.add_argument("--model_hg_path", type=str, choices=['allenai/scibert_scivocab_uncased', 'roberta-large'])
     args = parser.parse_args()
     main(args)

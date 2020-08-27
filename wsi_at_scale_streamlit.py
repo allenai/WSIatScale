@@ -1,5 +1,4 @@
 # pylint: disable=no-member
-from typing import Dict
 import streamlit as st
 import pandas as pd
 from transformers import AutoTokenizer
@@ -21,8 +20,8 @@ def cached_read_files(token, replacements_dir, inverted_index, sample_n_files):
     return read_files(token, replacements_dir, inverted_index, sample_n_files, bar=StreamlitTqdm)
 
 @st.cache(hash_funcs={tokenizers.Tokenizer: id}, suppress_st_warning=True, allow_output_mutation=True)
-def cached_tokenizer():
-    tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
+def cached_tokenizer(model_hg_path):
+    tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
     return tokenizer
 
 @st.cache(hash_funcs={RepsToInstances: id}, suppress_st_warning=True, allow_output_mutation=True)
@@ -34,8 +33,9 @@ def cached_jaccard(reps_to_instances):
 def main():
     st.title('WSI at Scale - CORD19')
     args = prepare_arguments()
+    args.model_hg_path = 'allenai/scibert_scivocab_uncased'#, 'roberta-large'
 
-    tokenizer = cached_tokenizer()
+    tokenizer = cached_tokenizer(args.model_hg_path)
 
     word = st.text_input('Word to disambiguate: (Split multiple words by `;` no space)', '')
     n_reps = st.slider("Number of replacements (Taken from SciBERT's masked LM)", 1, 100, 5)
@@ -95,7 +95,8 @@ def display_clustering(args, tokenizer, reps_to_instances):
         if n_clusters != 0:
             args.n_clusters = n_clusters
         distance_threshold = st.slider('Distance Threshold', 0.0, 1.0, 0.5)
-        args.distance_threshold = distance_threshold
+        if distance_threshold != 0:
+            args.distance_threshold = distance_threshold
         affinity = st.selectbox('Affinity', ("euclidean", "l1", "l2", "manhattan", "cosine", "precomputed"), index=5)
         args.affinity = affinity
         linkage = st.selectbox('Linkage', ("ward", "complete", "average", "single"), index=1)

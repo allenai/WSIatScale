@@ -11,7 +11,6 @@ from tqdm import tqdm
 
 from sklearn import cluster as sk_cluster
 from sklearn.metrics import pairwise_distances
-from transformers import AutoTokenizer
 
 MAX_REPS = 100
 class RepsToInstances:
@@ -21,7 +20,7 @@ class RepsToInstances:
     def populate(self, sent_and_positions, reps):
         for sent, token_pos_in_sent, global_token_pos in sent_and_positions:
             for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
-                single_sent = find_single_sent_around_token(sent, local_pos)
+                single_sent = self.find_single_sent_around_token(sent, local_pos)
                 key = tuple(reps[global_pos])
                 value = single_sent
                 self.data[key].append(value)
@@ -37,6 +36,21 @@ class RepsToInstances:
                 reps_to_instances.data[new_key].append(sent)
 
         return reps_to_instances
+
+    @staticmethod
+    def find_single_sent_around_token(concated_sents, local_pos):
+        print("WARNING: using 205 as full stop")
+        full_stop_token = 205 #TODO I think this can be better when using special_tokens <s>
+        full_stops_indices = np.where(concated_sents == full_stop_token)[0]
+        if len(full_stops_indices) == 0:
+            return concated_sents
+        end_index = full_stops_indices.searchsorted(local_pos)
+        start = full_stops_indices[end_index-1]+1 if end_index != 0 else 0
+        if end_index == len(full_stops_indices):
+            return concated_sents[start:]
+        end = full_stops_indices[end_index]+1
+        return concated_sents[start:end]
+
 
     def merge(self, other):
         for key, sents in other.data.items():
@@ -171,7 +185,6 @@ class MyDBSCAN(sk_cluster.DBSCAN, ClusterFactory):
 
     @staticmethod
     def group_for_display(args, tokenizer, clustered_reps, cluster_sents):
-        generators = []
         num_classes_without_outliers = max(clustered_reps.keys())
         non_outlier_clustered_reps = {i: clustered_reps[i] for i in range(num_classes_without_outliers)}
         non_outlier_cluster_sents = [cluster_sents[i] for i in range(num_classes_without_outliers)]
@@ -190,13 +203,13 @@ class MyDBSCAN(sk_cluster.DBSCAN, ClusterFactory):
                 yield (words_in_cluster, sents, msg)
 
 def tokenize(tokenizer, word):
-    token = tokenizer.encode(word, add_special_tokens=False)
+    token = tokenizer.encode(word, add_special_tokens=True)
     if len(token) > 1:
         raise ValueError('Word given is more than a single wordpiece.')
     token = token[0]
     return token
 
-def read_files(token, replacements_dir, inverted_index, sample_n_files, bar=tqdm) -> RepsToInstances:
+def read_files(token, replacements_dir, inverted_index, sample_n_files, bar=tqdm):
     files_with_pos = read_inverted_index(inverted_index, token)
     if sample_n_files > 0 and len(files_with_pos) > sample_n_files:
         files_with_pos = sample(files_with_pos, sample_n_files)
@@ -232,18 +245,6 @@ def cluster(args, reps_to_instances, tokenizer):
     representative_sents = clustering.representative_sents(clusters, sorted_reps_to_instances_data, jaccard_matrix, args.n_sents_to_print)
     clustering.group_for_display(args, tokenizer, clustered_reps, representative_sents)
 
-def find_single_sent_around_token(concated_sents, local_pos):
-    full_stop_token = 205
-    full_stops_indices = np.where(concated_sents == full_stop_token)[0]
-    if len(full_stops_indices) == 0:
-        return concated_sents
-    end_index = full_stops_indices.searchsorted(local_pos)
-    start = full_stops_indices[end_index-1]+1 if end_index != 0 else 0
-    if end_index == len(full_stops_indices):
-        return concated_sents[start:]
-    end = full_stops_indices[end_index]+1
-    return concated_sents[start:end]
-
 def find_sent_and_positions(token_idx_in_row, tokens, lengths):
     token_idx_in_row = np.array(token_idx_in_row)
     length_sum = 0
@@ -262,9 +263,9 @@ def read_inverted_index(inverted_index, token):
 def prepare_arguments():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--replacements_dir", type=str, default="data/replacements/done")
+    parser.add_argument("--replacements_dir", type=str, default="/home/matane/matan/dev/datasets/processed_for_WSI/CORD-19/replacements/done")
     parser.add_argument("--word", type=str, default='race')
-    parser.add_argument("--inverted_index", type=str, default='data/inverted_index.json')
+    parser.add_argument("--inverted_index", type=str, default='/home/matane/matan/dev/datasets/processed_for_WSI/CORD-19/inverted_index.json')
     parser.add_argument("--n_reps", type=int, default=5)
     parser.add_argument("--sample_n_files", type=int, default=1000)
     parser.add_argument("--n_bow_reps_to_report", type=int, default=10, help="How many different replacements to report")

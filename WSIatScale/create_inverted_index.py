@@ -8,10 +8,10 @@ from tqdm import tqdm
 
 from transformers import AutoTokenizer
 
-def main(replacements_dir, outfile, words_file, single_word):
+def main(replacements_dir, outfile, model_hg_path, words_file, single_word):
     assert words_file is not None or single_word is not None
 
-    tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
     if words_file:
         create_new_index(tokenizer, words_file, replacements_dir, outfile)
     else:
@@ -19,7 +19,7 @@ def main(replacements_dir, outfile, words_file, single_word):
 
 def index_single_word(tokenizer, word, replacements_dir, outfile, bar=tqdm):
     index = json.load(open(outfile, 'r'))
-    word_token = tokenizer.encode(word, add_special_tokens=False)
+    word_token = tokenizer.encode(word, add_special_tokens=True)
     assert len(word_token) == 1
     word_token = word_token[0]
 
@@ -57,7 +57,7 @@ def create_new_index(tokenizer, words_file, replacements_dir, outfile):
         words = f.readlines()
     words = [w.rstrip() for w in words]
 
-    words_tokens = tokenizer(words, add_special_tokens=False)['input_ids']
+    words_tokens = tokenizer(words, add_special_tokens=True)['input_ids']
     words_tokens = [t[0] for t in words_tokens if len(t) == 1]
 
     all_files = sorted(os.listdir(replacements_dir), key=lambda k: int(k.split('.')[0]))
@@ -88,9 +88,10 @@ if __name__ == "__main__":
 
     parser.add_argument("--replacements_dir", type=str, default="replacements")
     parser.add_argument("--outfile", type=str, default='inverted_index.json')
+    parser.add_argument("--model_hg_path", type=str, choices=['allenai/scibert_scivocab_uncased', 'roberta-large'])
     parser.add_argument("--words_file", type=str)
     parser.add_argument("--single_word", type=str)
 
     args = parser.parse_args()
 
-    main(args.replacements_dir, args.outfile, args.words_file, args.single_word)
+    main(args.replacements_dir, args.outfile, args.model_hg_path, args.words_file, args.single_word)

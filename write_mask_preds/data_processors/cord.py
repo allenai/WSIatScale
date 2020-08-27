@@ -1,10 +1,8 @@
-import dataclasses
-from dataclasses import dataclass
 import json
 import logging
 import os
 import time
-from typing import Optional, Union, List, Dict
+from typing import Optional, List
 
 import torch
 from torch.utils.data.dataset import Dataset
@@ -12,18 +10,9 @@ from torch.utils.data.dataset import Dataset
 from transformers.data.processors.utils import DataProcessor, InputExample
 from transformers.tokenization_utils import PreTrainedTokenizer
 
+from data_processors.data_processor import InputFeatures # pylint: disable=import-error
+
 logger = logging.getLogger(__name__)
-
-@dataclass(frozen=True)
-class InputFeatures:
-    input_ids: List[int]
-    attention_mask: Optional[List[int]] = None
-    token_type_ids: Optional[List[int]] = None
-    guid: Optional[Union[int, float, str]] = None
-
-    def to_json_string(self):
-        """Serializes this instance to a JSON string."""
-        return json.dumps(dataclasses.asdict(self)) + "\n"
 
 class CORDDataset(Dataset):
     def __init__(
@@ -105,7 +94,7 @@ def convert_examples_to_features(
         max_length=max_length,
         padding=padding_strategy,
         truncation=True,
-        add_special_tokens=False
+        add_special_tokens=True
     )
 
     features = []
