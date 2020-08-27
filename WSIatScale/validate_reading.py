@@ -3,7 +3,7 @@ import os
 
 def main():
     preds_dir = 'preds/'
-    files = ['in_words.npy', 'sent_ids.npy', 'sent_lengths.npy', 'pred_ids.npy', 'probs.npy']
+    files = ['in_words.npy', 'doc_ids.npy', 'sent_lengths.npy', 'pred_ids.npy', 'probs.npy']
     peek_files(preds_dir, files)
     check_stats(preds_dir, files)
 

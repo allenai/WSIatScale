@@ -1,10 +1,12 @@
 # QuickBERTInference
 
-## write_lm_mask_preds.py Script
+## write_mask_preds/write_mask_preds.py Script
 
 ### For running the forward pass and saving replacements to file run the following command with the additional optional arguments:
+This script needs to to be ran from inside the `write_mask_preds` folder, to be consistent with running using the Dockerfile on Beaker.
+
 ```
-python write_lm_mask_preds.py --data_dir ../datasets/CORD-19/processed/raw-splits --input_file raw-splits --max_tokens_per_batch 16384
+python write_mask_preds.py --data_dir ../../datasets/wiki-ann/wiki-ann/ --starts_with wiki --out_dir ../../datasets/processed_for_WSI/wiki/wiki000/replacements --dataset wiki --max_tokens_per_batch 16384 --fp16 --files_range 100-109
 ```
 
 `max_tokens_per_batch=16384` is the max power of 2 that fits in a single P-100 GPU.
@@ -19,19 +21,14 @@ python write_lm_mask_preds.py --data_dir ../datasets/CORD-19/processed/raw-split
 
 `--fp16`: Running with half precision. Using `opt_level=O2`.
 
+`--starts_with`: file starts with string.
+
+`--files_range`: important for datasets with a lot of files where I want to split it between processes.
+
 ## analyze.py Script
 
-```
-python analyze.py --replacements_dir replacements --word race --inverted_index inverted_index.json --n_reps 5 --sample_n_files 1000 --cluster --distance_threshold 0.8
-```
+This is accessed from `wsi_at_scale_streamlit.py`
 
-#### Mentionable Optional Arguments
+## wsi_at_scale_streamlit.py Script
 
-`--sample_n_files`: recommended, stop after going over `n` files from the inverted index.
-
-##### Pass one of the following options
-`--print`: print all matches of `word`.
-
-`--report_reps_diversity`: groups bags of replacements, prints an example and prints (bottom and top) the histogram. `--n_bow_reps_to_report` and `--n_sents_to_print` have default values of 10 and 1, change these if wishes.
-
-`--cluster`: Cluster bag of replacements using Agglomerative Clustering (Pass one of `--n_clusters` and `--distance_threshold`). `--top_n_to_cluster` has a default value of 100 as we usually don't want to cluster all possible bag of replacements.
+Run by `streamlit run wsi_at_scale_streamlit.py`

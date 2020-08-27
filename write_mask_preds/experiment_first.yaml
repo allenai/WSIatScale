@@ -1,0 +1,11 @@
+description: write mask LM predictions.
+tasks:
+    - name: first-100-wiki
+      cluster: ai2/on-prem-ai2-server1
+      spec:
+        image: lm-mask-preds
+        resultPath: /output
+        args: ['python', 'write_mask_preds.py', '--data_dir', '/data/wiki/', '--starts_with', 'first', '--out_dir', '/output/replacements', '--dataset', 'wiki', '--max_tokens_per_batch', '16384', '--fp16']
+        datasetMounts:
+        - datasetId: first-100-wiki
+          containerPath: /data/wiki
