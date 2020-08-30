@@ -39,9 +39,13 @@ class RepsToInstances:
 
     @staticmethod
     def find_single_sent_around_token(concated_sents, local_pos):
-        print("WARNING: using 205 as full stop")
-        full_stop_token = 205 #TODO I think this can be better when using special_tokens <s>
-        full_stops_indices = np.where(concated_sents == full_stop_token)[0]
+        def full_stop_index_hack():
+            if concated_sents[0] == 0: #roberta
+                return 4
+            else:
+                return 205
+        full_stop_index = full_stop_index_hack()
+        full_stops_indices = np.where(concated_sents == full_stop_index)[0]
         if len(full_stops_indices) == 0:
             return concated_sents
         end_index = full_stops_indices.searchsorted(local_pos)
@@ -49,7 +53,10 @@ class RepsToInstances:
         if end_index == len(full_stops_indices):
             return concated_sents[start:]
         end = full_stops_indices[end_index]+1
-        return concated_sents[start:end]
+        out = concated_sents[start:end]
+        out = out[out!=0]
+        out = out[out!=2]
+        return out
 
 
     def merge(self, other):
@@ -203,7 +210,7 @@ class MyDBSCAN(sk_cluster.DBSCAN, ClusterFactory):
                 yield (words_in_cluster, sents, msg)
 
 def tokenize(tokenizer, word):
-    token = tokenizer.encode(word, add_special_tokens=True)
+    token = tokenizer.encode(word, add_special_tokens=False)
     if len(token) > 1:
         raise ValueError('Word given is more than a single wordpiece.')
     token = token[0]
@@ -255,6 +262,8 @@ def find_sent_and_positions(token_idx_in_row, tokens, lengths):
         length_sum += length
 
 def read_inverted_index(inverted_index, token):
+    if not os.path.exists(inverted_index):
+        json.dump({}, open(inverted_index, 'w'))
     index = json.load(open(inverted_index, 'r'))
     if str(token) not in index:
         raise ValueError('token is not in inverted index. Dynamically indexing will be available soon.')

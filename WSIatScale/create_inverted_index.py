@@ -19,12 +19,12 @@ def main(replacements_dir, outfile, model_hg_path, words_file, single_word):
 
 def index_single_word(tokenizer, word, replacements_dir, outfile, bar=tqdm):
     index = json.load(open(outfile, 'r'))
-    word_token = tokenizer.encode(word, add_special_tokens=True)
+    word_token = tokenizer.encode(word, add_special_tokens=False)
     assert len(word_token) == 1
     word_token = word_token[0]
 
     assert word_token not in index
-    all_files = sorted(os.listdir(replacements_dir), key=lambda k: int(k.split('.')[0]))
+    all_files = os.listdir(replacements_dir)
     for filename in bar(all_files):
         npzfile = np.load(os.path.join(replacements_dir, filename))
         file_tokens = npzfile['tokens']

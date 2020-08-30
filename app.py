@@ -32,8 +32,17 @@ def cached_jaccard(reps_to_instances):
 
 def main():
     st.title('WSI at Scale - CORD19')
+
+    dataset = st.sidebar.selectbox('Dataset', ('Wikipedia', 'CORD-19'))
     args = prepare_arguments()
-    args.model_hg_path = 'allenai/scibert_scivocab_uncased'#, 'roberta-large'
+    if dataset == 'Wikipedia':
+        args.model_hg_path = 'roberta-large'
+        args.replacements_dir = '/home/matane/matan/dev/datasets/processed_for_WSI/wiki/wiki000/replacements'
+        args.inverted_index = '/home/matane/matan/dev/datasets/processed_for_WSI/wiki/wiki000/inverted_index.json'
+    else:
+        args.model_hg_path = 'allenai/scibert_scivocab_uncased'
+        args.replacements_dir = '/home/matane/matan/dev/datasets/processed_for_WSI/CORD-19/replacements/done'
+        args.inverted_index = '/home/matane/matan/dev/datasets/processed_for_WSI/CORD-19/inverted_index.json'
 
     tokenizer = cached_tokenizer(args.model_hg_path)
 
@@ -120,7 +129,7 @@ def display_clustering(args, tokenizer, reps_to_instances):
 
     clustered_reps = clustering.reps_to_their_clusters(clusters, sorted_reps_to_instances)
 
-    representative_sents = clustering.representative_sents(clusters, sorted_reps_to_instances, jaccard_matrix, args.n_sents_to_print)
+    representative_sents = clustering.representative_sents(clusters, sorted_reps_to_instances, jaccard_matrix, n_sents_to_print)
     for i, (words_in_cluster, sents, msg) in enumerate(clustering.group_for_display(args, tokenizer, clustered_reps, representative_sents)):
         st.subheader(msg['header'])
         st.write(msg['found'])
@@ -136,7 +145,7 @@ def display_clustering(args, tokenizer, reps_to_instances):
             if n_sents_to_print > 0:
                 st.write('**Exemplary Sentences**')
                 for sent in sents:
-                    st.write(f"*{tokenizer.decode(sent)}*")
+                    st.write(f"* {tokenizer.decode(sent).lstrip()}")
 
     clustering_load_state.text('')
 
