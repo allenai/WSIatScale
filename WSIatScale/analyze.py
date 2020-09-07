@@ -3,7 +3,7 @@ from collections import defaultdict, Counter
 from enum import Enum
 import json
 import os
-from random import sample, seed
+import random
 
 from efficient_apriori import apriori, itemsets_from_transactions
 import numpy as np
@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from sklearn import cluster as sk_cluster
 from sklearn.metrics import pairwise_distances
+from sklearn_extra.cluster import KMedoids
 
 MAX_REPS = 100
 class RepsToInstances:
@@ -98,6 +99,7 @@ class ClusterFactory():
     def make(alg_name, *args, **kwargs):
         alg_name = alg_name.lower()
         if alg_name == 'kmeans': return MyKMeans(*args, **kwargs)
+        if alg_name == 'kmedoids': return MyKMedoids(*args, **kwargs)
         if alg_name == 'agglomerative_clustering': return MyAgglomerativeClustering(*args, **kwargs)
         if alg_name == 'dbscan': return MyDBSCAN(*args, **kwargs)
 
@@ -112,7 +114,6 @@ class ClusterFactory():
     def group_for_display(args, tokenizer, clustered_reps, cluster_sents):
         show_top_n_clusters = args.show_top_n_clusters
         show_top_n_words_per_cluster = args.show_top_n_words_per_cluster
-        max_length = max([sum(len(r['examples']) for r in reps) for reps in clustered_reps.values()])
         sorted_zipped = sorted(zip(clustered_reps.values(), cluster_sents), key = lambda x: sum(len(reps['examples']) for reps in x[0]), reverse=True)
 
         sorted_clustered_reps, sorted_average_sents = zip(*sorted_zipped)
@@ -153,9 +154,37 @@ class MyKMeans(sk_cluster.KMeans, ClusterFactory):
     def clusters_range(self, clusters):
         return range(self.n_clusters)
 
+    def fit_predict(self, X):
+        X = 1 - X #Kmeans expects similarity and not distsance matrix
+        return super().fit_predict(X)
+
+class MyKMedoids(KMedoids, ClusterFactory):
+    def __init__(self, args):
+        self.n_clusters = args.n_clusters
+        super().__init__(n_clusters=self.n_clusters, random_state=args.seed)
+
+    def representative_sents(self, clusters, sorted_reps_to_instances_data, distance_matrix, n_sents_to_print):
+        cluster_sents = [[] for _ in self.clusters_range(clusters)]
+        closest_centers = np.argsort(pairwise_distances(self.cluster_centers_, distance_matrix))
+        for i, closest_sents in enumerate(closest_centers):
+            for c in closest_sents:
+                if clusters[c] == i:
+                    cluster_sents[i].append(sorted_reps_to_instances_data[c]['examples'][0])
+                if len(cluster_sents[i]) == n_sents_to_print:
+                    break
+        return cluster_sents
+
+    def clusters_range(self, clusters):
+        return range(self.n_clusters)
+
+    def fit_predict(self, X):
+        X = 1 - X
+        return super().fit_predict(X)
+
 class MyAgglomerativeClustering(sk_cluster.AgglomerativeClustering, ClusterFactory):
     def __init__(self, args):
         self.n_clusters = args.n_clusters
+        self.affinity = args.affinity
         super().__init__(n_clusters=self.n_clusters,
                          distance_threshold=args.distance_threshold,
                          affinity=args.affinity,
@@ -172,6 +201,12 @@ class MyAgglomerativeClustering(sk_cluster.AgglomerativeClustering, ClusterFacto
     
     def clusters_range(self, clusters):
         return range(0, max(clusters)+1)
+
+    def fit_predict(self, X):
+        if self.affinity != 'precomputed':
+            #"If "precomputed", a distance matrix (instead of a similarity matrix) is needed as input for the fit method."
+            X = 1 - X
+        return super().fit_predict(X)
 
 class MyDBSCAN(sk_cluster.DBSCAN, ClusterFactory):
     def __init__(self, args):
@@ -192,7 +227,7 @@ class MyDBSCAN(sk_cluster.DBSCAN, ClusterFactory):
 
     @staticmethod
     def group_for_display(args, tokenizer, clustered_reps, cluster_sents):
-        num_classes_without_outliers = max(clustered_reps.keys())
+        num_classes_without_outliers = max(clustered_reps.keys()) + 1
         non_outlier_clustered_reps = {i: clustered_reps[i] for i in range(num_classes_without_outliers)}
         non_outlier_cluster_sents = [cluster_sents[i] for i in range(num_classes_without_outliers)]
         if len(non_outlier_clustered_reps) > 0:
@@ -216,10 +251,11 @@ def tokenize(tokenizer, word):
     token = token[0]
     return token
 
-def read_files(token, replacements_dir, inverted_index, sample_n_files, bar=tqdm):
+def read_files(token, replacements_dir, inverted_index, sample_n_files, seed, bar=tqdm):
     files_with_pos = read_inverted_index(inverted_index, token)
     if sample_n_files > 0 and len(files_with_pos) > sample_n_files:
-        files_with_pos = sample(files_with_pos, sample_n_files)
+        random.seed(seed)
+        files_with_pos = random.sample(files_with_pos, sample_n_files)
 
     n_matches = 0
     reps_to_instances = RepsToInstances()
@@ -262,12 +298,14 @@ def find_sent_and_positions(token_idx_in_row, tokens, lengths):
         length_sum += length
 
 def read_inverted_index(inverted_index, token):
-    if not os.path.exists(inverted_index):
-        json.dump({}, open(inverted_index, 'w'))
-    index = json.load(open(inverted_index, 'r'))
-    if str(token) not in index:
-        raise ValueError('token is not in inverted index. Dynamically indexing will be available soon.')
-    return index[str(token)]
+    inverted_index_file = os.path.join(inverted_index, f"{token}.txt")
+    if not os.path.exists(inverted_index_file):
+        raise ValueError('token is not in inverted index')
+    index = {}
+    with open(inverted_index_file, 'r') as f:
+        for line in f:
+            index.update(json.loads(line))
+    return [[k, v] for k, v in index.items()] #TODO keep in dictionary form
 
 def prepare_arguments():
     parser = argparse.ArgumentParser()
@@ -285,7 +323,7 @@ def prepare_arguments():
     parser.add_argument("--cluster_alg", type=str, default=None, choices=['kmeans', 'agglomerative_clustering', 'dbscan'])
     parser.add_argument("--n_clusters", type=int, help="n_clusters, for kmeans and agglomerative_clustering")
     parser.add_argument("--distance_threshold", type=float, help="for agglomerative_clustering")
-    parser.add_argument("--affinity", type=str, help="for agglomerative_clustering", default='precomputed')
+    parser.add_argument("--affinity", type=str, help="for agglomerative_clustering")
     parser.add_argument("--linkage", type=str, help="for agglomerative_clustering", default='complete')
     parser.add_argument("--eps", type=float, help="for dbscan")
     parser.add_argument("--min_samples", type=float, help="for dbscan")
@@ -295,8 +333,8 @@ def prepare_arguments():
     return args
 
 def run_apriori(reps_to_instances, min_support):
-    keys = reps_to_instances.data.keys() #TODO, need to augment with the real count (num of length)
-    itemsets = itemsets_from_transactions(keys, min_support=min_support)
+    keys = [k for k, v in reps_to_instances.data.items() for _ in range(len(v))]
+    itemsets, _ = itemsets_from_transactions(keys, min_support=min_support, output_transaction_ids=True)
     return itemsets
 
 def assert_arguments(args):
