@@ -1,6 +1,7 @@
 import argparse
 from collections import defaultdict, Counter
 from enum import Enum
+from itertools import combinations
 import json
 import os
 import random
@@ -9,9 +10,15 @@ from efficient_apriori import apriori, itemsets_from_transactions
 import numpy as np
 from tqdm import tqdm
 
+from networkx.algorithms import community
+import networkx as nx
+import community as community_louvain
+
 from sklearn import cluster as sk_cluster
 from sklearn.metrics import pairwise_distances
 from sklearn_extra.cluster import KMedoids
+
+SEED = 111
 
 MAX_REPS = 100
 class RepsToInstances:
@@ -33,10 +40,26 @@ class RepsToInstances:
         reps_to_instances = RepsToInstances()
         for key, sents in self.data.items():
             new_key = key[:n_reps]
-            for sent in sents:
-                reps_to_instances.data[new_key].append(sent)
+            reps_to_instances.data[new_key].extend(sents)
 
         return reps_to_instances
+
+    def remove_query_word(self, tokenizer, word, merge_same_keys):
+        similar_words = [word.lower().lstrip(), f" {word.lower().lstrip()}", word.lower().title().lstrip(), f" {word.title().lstrip()}"]
+        similar_tokens = []
+        for w in similar_words:
+            t = tokenizer.encode(w, add_special_tokens=False)
+            if len(t) == 1:
+                similar_tokens.append(t[0])
+
+        reps_to_instances = RepsToInstances()
+        for key, sents in self.data.items():
+            new_key = tuple(t for t in key if t not in similar_tokens)
+            if merge_same_keys:
+                new_key = tuple(sorted(new_key))
+            reps_to_instances.data[new_key].extend(sents)
+
+        self.data = reps_to_instances.data
 
     @staticmethod
     def find_single_sent_around_token(concated_sents, local_pos):
@@ -138,7 +161,7 @@ class ClusterFactory():
 class MyKMeans(sk_cluster.KMeans, ClusterFactory):
     def __init__(self, args):
         self.n_clusters = args.n_clusters
-        super().__init__(n_clusters=self.n_clusters, random_state=args.seed)
+        super().__init__(n_clusters=self.n_clusters, random_state=SEED)
 
     def representative_sents(self, clusters, sorted_reps_to_instances_data, distance_matrix, n_sents_to_print):
         cluster_sents = [[] for _ in self.clusters_range(clusters)]
@@ -161,7 +184,7 @@ class MyKMeans(sk_cluster.KMeans, ClusterFactory):
 class MyKMedoids(KMedoids, ClusterFactory):
     def __init__(self, args):
         self.n_clusters = args.n_clusters
-        super().__init__(n_clusters=self.n_clusters, random_state=args.seed)
+        super().__init__(n_clusters=self.n_clusters, random_state=SEED)
 
     def representative_sents(self, clusters, sorted_reps_to_instances_data, distance_matrix, n_sents_to_print):
         cluster_sents = [[] for _ in self.clusters_range(clusters)]
@@ -198,7 +221,7 @@ class MyAgglomerativeClustering(sk_cluster.AgglomerativeClustering, ClusterFacto
             cluster_sents[c].append(sorted_reps_to_instances_data[i]['examples'][0])
 
         return cluster_sents
-    
+
     def clusters_range(self, clusters):
         return range(0, max(clusters)+1)
 
@@ -251,10 +274,10 @@ def tokenize(tokenizer, word):
     token = token[0]
     return token
 
-def read_files(token, replacements_dir, inverted_index, sample_n_files, seed, bar=tqdm):
+def read_files(token, replacements_dir, inverted_index, sample_n_files, bar=tqdm):
     files_with_pos = read_inverted_index(inverted_index, token)
     if sample_n_files > 0 and len(files_with_pos) > sample_n_files:
-        random.seed(seed)
+        random.seed(SEED)
         files_with_pos = random.sample(files_with_pos, sample_n_files)
 
     n_matches = 0
@@ -287,6 +310,93 @@ def cluster(args, reps_to_instances, tokenizer):
 
     representative_sents = clustering.representative_sents(clusters, sorted_reps_to_instances_data, jaccard_matrix, args.n_sents_to_print)
     clustering.group_for_display(args, tokenizer, clustered_reps, representative_sents)
+
+def cluster_words(args, reps_to_instances, tokenizer):
+    sorted_reps_to_instances_data = [{'reps': k, 'examples': v} for k, v in sorted(reps_to_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
+    jaccard_matrix = Jaccard().pairwise_distance([x['reps'] for x in sorted_reps_to_instances_data])
+
+    clustering = ClusterFactory.make(args.cluster_alg, args)
+    clusters = clustering.fit_predict(jaccard_matrix)
+
+    clustered_reps = clustering.reps_to_their_clusters(clusters, sorted_reps_to_instances_data)
+
+    representative_sents = clustering.representative_sents(clusters, sorted_reps_to_instances_data, jaccard_matrix, args.n_sents_to_print)
+    clustering.group_for_display(args, tokenizer, clustered_reps, representative_sents)
+
+class CommunityFinder:
+    def __init__(self, reps_to_instances):
+        self.create_cooccurrence_matrix(reps_to_instances)
+
+    def create_cooccurrence_matrix(self, reps_to_instances):
+        self.create_empty_cooccurrence_matrix(reps_to_instances)
+
+        for reps, sents in reps_to_instances.data.items():
+            combs = combinations(reps, 2)
+            for comb in combs:
+                self.update_matrix(comb, len(sents))
+
+    def update_matrix(self, comb, value):
+        key0 = self.token2node[comb[0]]
+        key1 = self.token2node[comb[1]]
+
+        self.cooccurrence_matrix[key0, key1] += value
+        self.cooccurrence_matrix[key1, key0] += value
+
+    def create_empty_cooccurrence_matrix(self, reps_to_instances):
+        node2token = []
+        for reps in reps_to_instances.data.keys():
+            for w in reps:
+                if w not in node2token:
+                    node2token.append(w)
+
+        mat_size = len(node2token)
+        self.node2token = node2token
+        self.token2node = {k: i for i, k in enumerate(self.node2token)}
+        self.cooccurrence_matrix = np.zeros((mat_size, mat_size))
+
+    def find(self, method='girvan_newman', top_n_nodes_to_keep=None):
+        G = nx.from_numpy_matrix(self.cooccurrence_matrix)
+        if top_n_nodes_to_keep:
+            cutoff_degree = sorted(dict(G.degree()).values())[-top_n_nodes_to_keep] # pylint: disable=invalid-unary-operand-type
+            nodes_with_lower_degree = [node for node, degree in dict(G.degree()).items() if degree < cutoff_degree]
+            G.remove_nodes_from(nodes_with_lower_degree)
+        if method == 'Girvan-Newman':
+            communities_generator = community.girvan_newman(G)
+            communities = next(communities_generator)
+        if method == 'Weighted Girvan-Newman':
+            from networkx import edge_betweenness_centrality as betweenness
+            def most_central_edge(G):
+                centrality = betweenness(G, weight="weight")
+                return max(centrality, key=centrality.get)
+
+            communities_generator = community.girvan_newman(G, most_valuable_edge=most_central_edge)
+            communities = next(communities_generator)
+        elif method == 'async LPA':
+            communities = list(community.label_propagation.asyn_lpa_communities(G, seed=SEED))
+        elif method == 'Weighted async LPA':
+            communities = list(community.label_propagation.asyn_lpa_communities(G, weight='weight', seed=SEED))
+        elif method == 'Clauset-Newman-Moore (no weights)':
+            communities = list(community.modularity_max.greedy_modularity_communities(G))
+        elif method == 'Louvain':
+            partition = community_louvain.best_partition(G, random_state=SEED)
+            communities = [[] for _ in range(max(partition.values())+1)]
+            for n, c in partition.items():
+                communities[c].append(n)
+
+        return sorted(map(sorted, communities), key=len, reverse=True)
+
+    def community_tokens_with_sents(self, communities, reps_to_instances):
+        community_tokens = [[self.node2token[c] for c in comm] for comm in communities]
+        token_to_comm = {t: i for i, c in enumerate(community_tokens) for t in c}
+        communities_sents = [[] for c in range(len(communities))]
+
+        for reps, sents in reps_to_instances.data.items():
+            counter = Counter(map(lambda r: token_to_comm[r], reps))
+            argmax = counter.most_common()[0][0]
+            communities_sents[argmax].extend(sents)
+
+        community_tokens, communities_sents = zip(*sorted(zip(community_tokens, communities_sents), key=lambda x: len(x[1]), reverse=True))
+        return community_tokens, communities_sents
 
 def find_sent_and_positions(token_idx_in_row, tokens, lengths):
     token_idx_in_row = np.array(token_idx_in_row)
@@ -327,7 +437,6 @@ def prepare_arguments():
     parser.add_argument("--linkage", type=str, help="for agglomerative_clustering", default='complete')
     parser.add_argument("--eps", type=float, help="for dbscan")
     parser.add_argument("--min_samples", type=float, help="for dbscan")
-    parser.add_argument("--seed", type=int, default=111)
     args = parser.parse_args()
 
     return args
