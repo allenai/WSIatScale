@@ -19,9 +19,12 @@ PAD_ID = 0
 dataset_params = {'cord': {'dataset_class': CORDDataset,
                            'model_class': BertForMaskedLM,
                            'model_hg_path': 'allenai/scibert_scivocab_uncased',},
-                  'wiki': {'dataset_class': WikiDataset,
-                           'model_class': RobertaForMaskedLM,
-                           'model_hg_path': 'roberta-large',},
+                  'wiki-roberta': {'dataset_class': WikiDataset,
+                                   'model_class': RobertaForMaskedLM,
+                                   'model_hg_path': 'roberta-large',},
+                  'wiki-bert': {'dataset_class': WikiDataset,
+                                'model_class': BertForMaskedLM,
+                                'model_hg_path': 'bert-large-cased-whole-word-masking',},
                  }
 
 def main(args):
@@ -123,7 +126,7 @@ if __name__ == "__main__":
     parser.add_argument("--starts_with", type=str, required=True)
     parser.add_argument("--files_range", type=str, help="should be splited with `-`")
     parser.add_argument("--out_dir", type=str, default="replacements")
-    parser.add_argument("--dataset", type=str, required=True, choices=['cord', 'wiki'])
+    parser.add_argument("--dataset", type=str, required=True, choices=['cord', 'wiki-roberta', 'wiki-bert'])
     parser.add_argument("--local_rank", type=int, default=-1, help="Not Maintained")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--max_seq_length", type=int, default=512)

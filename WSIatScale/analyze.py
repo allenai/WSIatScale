@@ -25,10 +25,10 @@ class RepsToInstances:
     def __init__(self):
         self.data = defaultdict(list)
 
-    def populate(self, sent_and_positions, reps):
+    def populate(self, sent_and_positions, reps, full_stop_index):
         for sent, token_pos_in_sent, global_token_pos in sent_and_positions:
             for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
-                single_sent = self.find_single_sent_around_token(sent, local_pos)
+                single_sent = self.find_single_sent_around_token(sent, local_pos, full_stop_index)
                 key = tuple(reps[global_pos])
                 value = single_sent
                 self.data[key].append(value)
@@ -62,13 +62,7 @@ class RepsToInstances:
         self.data = reps_to_instances.data
 
     @staticmethod
-    def find_single_sent_around_token(concated_sents, local_pos):
-        def full_stop_index_hack():
-            if concated_sents[0] == 0: #roberta
-                return 4
-            else:
-                return 205
-        full_stop_index = full_stop_index_hack()
+    def find_single_sent_around_token(concated_sents, local_pos, full_stop_index):
         full_stops_indices = np.where(concated_sents == full_stop_index)[0]
         if len(full_stops_indices) == 0:
             return concated_sents
@@ -274,7 +268,7 @@ def tokenize(tokenizer, word):
     token = token[0]
     return token
 
-def read_files(token, replacements_dir, inverted_index, sample_n_files, bar=tqdm):
+def read_files(token, replacements_dir, inverted_index, sample_n_files, full_stop_index, bar=tqdm):
     files_with_pos = read_inverted_index(inverted_index, token)
     if sample_n_files > 0 and len(files_with_pos) > sample_n_files:
         random.seed(SEED)
@@ -292,7 +286,7 @@ def read_files(token, replacements_dir, inverted_index, sample_n_files, bar=tqdm
 
         sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths))
 
-        reps_to_instances.populate(sent_and_positions, reps)
+        reps_to_instances.populate(sent_and_positions, reps, full_stop_index)
 
         n_matches += len(token_idx_in_row)
 
@@ -385,18 +379,19 @@ class CommunityFinder:
 
         return sorted(map(sorted, communities), key=len, reverse=True)
 
-    def community_tokens_with_sents(self, communities, reps_to_instances):
+    def voting(self, communities, reps_to_instances):
         community_tokens = [[self.node2token[c] for c in comm] for comm in communities]
         token_to_comm = {t: i for i, c in enumerate(community_tokens) for t in c}
-        communities_sents = [[] for c in range(len(communities))]
+        communities_sents_data = [[] for c in range(len(communities))]
 
         for reps, sents in reps_to_instances.data.items():
             counter = Counter(map(lambda r: token_to_comm[r], reps))
             argmax = counter.most_common()[0][0]
-            communities_sents[argmax].extend(sents)
+            for sent in sents:
+                communities_sents_data[argmax].append((sent, reps))
 
-        community_tokens, communities_sents = zip(*sorted(zip(community_tokens, communities_sents), key=lambda x: len(x[1]), reverse=True))
-        return community_tokens, communities_sents
+        community_tokens, communities_sents_data = zip(*sorted(zip(community_tokens, communities_sents_data), key=lambda x: len(x[1]), reverse=True))
+        return community_tokens, communities_sents_data
 
 def find_sent_and_positions(token_idx_in_row, tokens, lengths):
     token_idx_in_row = np.array(token_idx_in_row)
@@ -408,7 +403,7 @@ def find_sent_and_positions(token_idx_in_row, tokens, lengths):
         length_sum += length
 
 def read_inverted_index(inverted_index, token):
-    inverted_index_file = os.path.join(inverted_index, f"{token}.txt")
+    inverted_index_file = os.path.join(inverted_index, f"{token}.jsonl")
     if not os.path.exists(inverted_index_file):
         raise ValueError('token is not in inverted index')
     index = {}

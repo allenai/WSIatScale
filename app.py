@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from transformers import AutoTokenizer
 import tokenizers
+import random
 
 from WSIatScale.analyze import (read_files,
                                 Jaccard,
@@ -20,8 +21,8 @@ import altair as alt
 SEED = 111
 
 @st.cache(suppress_st_warning=True, allow_output_mutation=True)
-def cached_read_files(token, replacements_dir, inverted_index, sample_n_files):
-    return read_files(token, replacements_dir, inverted_index, sample_n_files, bar=StreamlitTqdm)
+def cached_read_files(token, replacements_dir, inverted_index, sample_n_files, full_stop_index):
+    return read_files(token, replacements_dir, inverted_index, sample_n_files, full_stop_index, bar=StreamlitTqdm)
 
 @st.cache(hash_funcs={RepsToInstances: id}, suppress_st_warning=True, allow_output_mutation=True)
 def cached_populate_specific_size(all_reps_to_instances, n_reps):
@@ -49,20 +50,30 @@ def cached_find_communities(community_finder, method, top_n_nodes_to_keep=None):
 def main():
     st.title('WSI at Scale')
 
-    dataset = st.sidebar.selectbox('Dataset', ('Wikipedia', 'CORD-19'))
+    dataset = st.sidebar.selectbox('Dataset', ('Wikipedia (RoBERTa)', 'Wikipedia (BERT)', 'CORD-19'), 1)
     args = prepare_arguments()
-    if dataset == 'Wikipedia':
+    if dataset == 'Wikipedia (RoBERTa)':
         args.model_hg_path = 'roberta-large'
         args.replacements_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all/replacements'
         args.inverted_index = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all/inverted_index'
-    else:
+        example_word = ' bass'
+        full_stop_index = 4
+    elif dataset == 'Wikipedia (BERT)':
+        args.model_hg_path = 'bert-large-cased-whole-word-masking'
+        args.replacements_dir = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/replacements'
+        args.inverted_index = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/inverted_index'
+        example_word = 'bass'
+        full_stop_index = 119
+    elif dataset == 'CORD-19':
         args.model_hg_path = 'allenai/scibert_scivocab_uncased'
         args.replacements_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/CORD-19/replacements/done'
         args.inverted_index = '/mnt/disks/mnt1/datasets/processed_for_WSI/CORD-19/inverted_index'
+        example_word = 'race'
+        full_stop_index = 205
 
     tokenizer = cached_tokenizer(args.model_hg_path)
 
-    word = st.sidebar.text_input('Word to disambiguate: (Split multiple words by `;` no space)', ' bass')
+    word = st.sidebar.text_input('Word to disambiguate: (Split multiple words by `;` no space)', example_word)
     n_reps = st.sidebar.slider(f"Number of replacements (Taken from {args.model_hg_path}'s masked LM)", 1, 100, 5)
     args.n_reps = n_reps
 
@@ -81,7 +92,7 @@ def main():
             st.write('Word given is more than a single wordpiece. Please choose a different word.')
 
         if token:
-            curr_word_reps_to_instances = read_files_from_cache(args, tokenizer, dataset, token, n_reps, sample_n_files)
+            curr_word_reps_to_instances = read_files_from_cache(args, tokenizer, dataset, token, n_reps, sample_n_files, full_stop_index)
             curr_word_reps_to_instances.remove_query_word(tokenizer, w, merge_same_keys=True)
 
             if reps_to_instances is None:
@@ -105,9 +116,9 @@ def main():
     if reps_to_instances and action == 'Apriori':
         display_apriori(tokenizer, reps_to_instances)
 
-def read_files_from_cache(args, tokenizer, dataset, token, n_reps, sample_n_files):
+def read_files_from_cache(args, tokenizer, dataset, token, n_reps, sample_n_files, full_stop_index):
     try:
-        all_reps_to_instances, msg = cached_read_files(token, args.replacements_dir, args.inverted_index, sample_n_files)
+        all_reps_to_instances, msg = cached_read_files(token, args.replacements_dir, args.inverted_index, sample_n_files, full_stop_index)
         reps_to_instances = cached_populate_specific_size(all_reps_to_instances, n_reps)
         st.write(msg)
         return reps_to_instances
@@ -159,16 +170,16 @@ def display_communities(args, tokenizer, reps_to_instances):
         index=0)
     n_sents_to_print = st.number_input('Exemplary Sentences to Present', value=3, min_value=0)
     at_least_n_matches = st.number_input('Number of Minimum Sentence Matches', value=5, min_value=1, max_value=100)
-    
+
     community_finder = cached_CommunityFinder(reps_to_instances)
     communities = cached_find_communities(community_finder, community_alg, top_n_nodes_to_keep)
-    communities_tokens, communities_sents = community_finder.community_tokens_with_sents(communities, reps_to_instances)
+    communities_tokens, communities_sents_data = community_finder.voting(communities, reps_to_instances)
 
     print_communities_graph(tokenizer,
                             community_finder,
                             communities,
                             communities_tokens,
-                            communities_sents,
+                            communities_sents_data,
                             n_sents_to_print,
                             at_least_n_matches)
 
@@ -176,24 +187,29 @@ def print_communities_graph(tokenizer,
                             community_finder,
                             communities,
                             communities_tokens,
-                            communities_sents,
+                            communities_sents_data,
                             n_sents_to_print,
                             at_least_n_matches):
     num_skipped = 0
-    for comm, sents in zip(communities_tokens, communities_sents):
-        if len(sents) < at_least_n_matches:
+    random.seed(SEED)
+    for comm, sents_data in zip(communities_tokens, communities_sents_data):
+        if len(sents_data) < at_least_n_matches:
             num_skipped += 1
             continue
-        checkbox_text = tokenizer.decode(comm)
+        random.shuffle(sents_data)
+        checkbox_text = " ".join([tokenizer.decode([t]) for t in  comm])
         if len(checkbox_text) > 500:
             checkbox_text = checkbox_text[:487]+" ..."
-        display_sents = st.checkbox(checkbox_text + f" - ({len(sents)} sents)")
+        display_sents = st.checkbox(checkbox_text + f" - ({len(sents_data)} sents)")
         if display_sents:
-            for sent in sents[:n_sents_to_print]:
-                st.write(f"* {tokenizer.decode(sent).lstrip()}")
+            for (sent, reps) in sents_data[:n_sents_to_print]:
+                text = f"{tokenizer.decode(sent).lstrip()}"
+                reps_text = " ".join([tokenizer.decode([rep]).lstrip() for rep in reps])
+                st.write(f"* **{reps_text}:** ", text)
     if num_skipped > 0:
         st.write(f"Skipped {num_skipped} communities with less than {at_least_n_matches} sentences.")
 
+    # Print Graph
     import networkx as nx
     import matplotlib.pyplot as plt
     from PIL import Image
@@ -207,7 +223,7 @@ def print_communities_graph(tokenizer,
         extended_words_i_care_about.extend([w, f" {w}", w.title(), f" {w.title()}"])
     node2word = {k: v for k, v in node2word.items() if v in extended_words_i_care_about}
 
-    pos = nx.spring_layout(G, seed=SEED)  # compute graph layout
+    pos = nx.spring_layout(G, seed=SEED)
     plt.axis('off')
     partition = {n:c for c in range(len(communities)) for n in communities[c]}
     sorted_partition_values = [partition[n] for n in range(max(partition) + 1)]
