@@ -1,37 +1,33 @@
 import argparse
-from collections import defaultdict, Counter
-from enum import Enum
-from itertools import combinations
+from collections import defaultdict
+from dataclasses import dataclass
 import json
 import os
 import random
 
-from efficient_apriori import apriori, itemsets_from_transactions
 import numpy as np
 from tqdm import tqdm
-
-from networkx.algorithms import community
-import networkx as nx
-import community as community_louvain
-
-from sklearn import cluster as sk_cluster
-from sklearn.metrics import pairwise_distances
-from sklearn_extra.cluster import KMedoids
 
 SEED = 111
 
 MAX_REPS = 100
+
+@dataclass
+class Instance:
+    doc_id: int
+    sent: np.array
+
 class RepsToInstances:
     def __init__(self):
         self.data = defaultdict(list)
 
     def populate(self, sent_and_positions, reps, full_stop_index):
-        for sent, token_pos_in_sent, global_token_pos in sent_and_positions:
+        for sent, token_pos_in_sent, global_token_pos, doc_id in sent_and_positions:
             for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
                 single_sent = self.find_single_sent_around_token(sent, local_pos, full_stop_index)
                 key = tuple(reps[global_pos])
                 value = single_sent
-                self.data[key].append(value)
+                self.data[key].append(Instance(doc_id, value))
 
     def populate_specific_size(self, n_reps):
         if n_reps == MAX_REPS:
@@ -63,6 +59,9 @@ class RepsToInstances:
 
     @staticmethod
     def find_single_sent_around_token(concated_sents, local_pos, full_stop_index):
+        if full_stop_index == None:
+            return concated_sents
+
         full_stops_indices = np.where(concated_sents == full_stop_index)[0]
         if len(full_stops_indices) == 0:
             return concated_sents
@@ -76,190 +75,12 @@ class RepsToInstances:
         out = out[out!=2]
         return out
 
-
     def merge(self, other):
         for key, sents in other.data.items():
             if key not in self.data:
                 self.data[key] = sents
             else:
                 self.data[key].append(sents)
-
-class Jaccard:
-    def __init__(self):
-        self.matrix = None
-
-    def init_matrix(self, length):
-        self.matrix = np.zeros((length, length), dtype=np.float16)
-
-    def pairwise_distance(self, X):
-        length = len(X)
-        self.init_matrix(length)
-        for i in range(length):
-            for j in range(i+1, length):
-                distance = self.distance(X[i], X[j])
-                self.matrix[i, j] = distance
-                self.matrix[j, i] = distance
-
-        return self.matrix
-
-    def distance(self, x, y):
-        return 1 - self.similarity(x, y)
-
-    def similarity(self, x, y):
-        x, y = set(x), set(y)
-        intersection = len(x.intersection(y))
-        union = len(x) + len(y) - intersection
-        return float(intersection) / union
-
-class ClusterFactory():
-    @staticmethod
-    def make(alg_name, *args, **kwargs):
-        alg_name = alg_name.lower()
-        if alg_name == 'kmeans': return MyKMeans(*args, **kwargs)
-        if alg_name == 'kmedoids': return MyKMedoids(*args, **kwargs)
-        if alg_name == 'agglomerative_clustering': return MyAgglomerativeClustering(*args, **kwargs)
-        if alg_name == 'dbscan': return MyDBSCAN(*args, **kwargs)
-
-    def reps_to_their_clusters(self, clusters, sorted_reps_to_instances_data):
-        clustered_reps = {i: [] for i in self.clusters_range(clusters)}
-        for c, rep_with_examples in zip(clusters, sorted_reps_to_instances_data):
-            clustered_reps[c].append(rep_with_examples)
-
-        return clustered_reps
-
-    @staticmethod
-    def group_for_display(args, tokenizer, clustered_reps, cluster_sents):
-        show_top_n_clusters = args.show_top_n_clusters
-        show_top_n_words_per_cluster = args.show_top_n_words_per_cluster
-        sorted_zipped = sorted(zip(clustered_reps.values(), cluster_sents), key = lambda x: sum(len(reps['examples']) for reps in x[0]), reverse=True)
-
-        sorted_clustered_reps, sorted_average_sents = zip(*sorted_zipped)
-        top_clustered_reps = sorted_clustered_reps[:show_top_n_clusters]
-        for i, cluster_reps in enumerate(top_clustered_reps):
-            words_in_cluster = Counter()
-            for reps in cluster_reps:
-                for rep in reps['reps']:
-                    words_in_cluster[rep] += len(reps['examples'])
-            msg = {'header': f"Cluster {i}",
-                   'found': f"Found total {sum(len(reps['examples']) for reps in cluster_reps)} matches"}
-            words_in_cluster = words_in_cluster.most_common(show_top_n_words_per_cluster)
-            words_in_cluster = [(tokenizer.decode([t]), c) for t, c in words_in_cluster]
-
-            yield words_in_cluster, sorted_average_sents[i], msg
-
-        if show_top_n_clusters < len(sorted_clustered_reps):
-            msg = {'header': f"There are additional {len(sorted_clustered_reps) - show_top_n_clusters} that are not displayed.",
-                   'found': ''}
-            yield None, None, msg
-
-class MyKMeans(sk_cluster.KMeans, ClusterFactory):
-    def __init__(self, args):
-        self.n_clusters = args.n_clusters
-        super().__init__(n_clusters=self.n_clusters, random_state=SEED)
-
-    def representative_sents(self, clusters, sorted_reps_to_instances_data, distance_matrix, n_sents_to_print):
-        cluster_sents = [[] for _ in self.clusters_range(clusters)]
-        closest_centers = np.argsort(pairwise_distances(self.cluster_centers_, distance_matrix))
-        for i, closest_sents in enumerate(closest_centers):
-            for c in closest_sents:
-                if clusters[c] == i:
-                    cluster_sents[i].append(sorted_reps_to_instances_data[c]['examples'][0])
-                if len(cluster_sents[i]) == n_sents_to_print:
-                    break
-        return cluster_sents
-
-    def clusters_range(self, clusters):
-        return range(self.n_clusters)
-
-    def fit_predict(self, X):
-        X = 1 - X #Kmeans expects similarity and not distsance matrix
-        return super().fit_predict(X)
-
-class MyKMedoids(KMedoids, ClusterFactory):
-    def __init__(self, args):
-        self.n_clusters = args.n_clusters
-        super().__init__(n_clusters=self.n_clusters, random_state=SEED)
-
-    def representative_sents(self, clusters, sorted_reps_to_instances_data, distance_matrix, n_sents_to_print):
-        cluster_sents = [[] for _ in self.clusters_range(clusters)]
-        closest_centers = np.argsort(pairwise_distances(self.cluster_centers_, distance_matrix))
-        for i, closest_sents in enumerate(closest_centers):
-            for c in closest_sents:
-                if clusters[c] == i:
-                    cluster_sents[i].append(sorted_reps_to_instances_data[c]['examples'][0])
-                if len(cluster_sents[i]) == n_sents_to_print:
-                    break
-        return cluster_sents
-
-    def clusters_range(self, clusters):
-        return range(self.n_clusters)
-
-    def fit_predict(self, X):
-        X = 1 - X
-        return super().fit_predict(X)
-
-class MyAgglomerativeClustering(sk_cluster.AgglomerativeClustering, ClusterFactory):
-    def __init__(self, args):
-        self.n_clusters = args.n_clusters
-        self.affinity = args.affinity
-        super().__init__(n_clusters=self.n_clusters,
-                         distance_threshold=args.distance_threshold,
-                         affinity=args.affinity,
-                         linkage=args.linkage)
-
-    def representative_sents(self, clusters, sorted_reps_to_instances_data, _, n_sents_to_print):
-        cluster_sents = [[] for _ in self.clusters_range(clusters)]
-        for i, c in enumerate(clusters):
-            if len(cluster_sents[c]) == n_sents_to_print:
-                continue
-            cluster_sents[c].append(sorted_reps_to_instances_data[i]['examples'][0])
-
-        return cluster_sents
-
-    def clusters_range(self, clusters):
-        return range(0, max(clusters)+1)
-
-    def fit_predict(self, X):
-        if self.affinity != 'precomputed':
-            #"If "precomputed", a distance matrix (instead of a similarity matrix) is needed as input for the fit method."
-            X = 1 - X
-        return super().fit_predict(X)
-
-class MyDBSCAN(sk_cluster.DBSCAN, ClusterFactory):
-    def __init__(self, args):
-        super().__init__(eps=args.eps, min_samples=args.min_samples)
-
-    def representative_sents(self, clusters, sorted_reps_to_instances_data, _, n_sents_to_print):
-        #TODO can I find a way to get the central ones!?
-        cluster_sents = {i:[] for i in self.clusters_range(clusters)}
-        for i, c in enumerate(clusters):
-            if len(cluster_sents[c]) == n_sents_to_print:
-                continue
-            cluster_sents[c].append(sorted_reps_to_instances_data[i]['examples'][0])
-
-        return cluster_sents
-
-    def clusters_range(self, clusters):
-        return range(min(clusters), max(clusters)+1)
-
-    @staticmethod
-    def group_for_display(args, tokenizer, clustered_reps, cluster_sents):
-        num_classes_without_outliers = max(clustered_reps.keys()) + 1
-        non_outlier_clustered_reps = {i: clustered_reps[i] for i in range(num_classes_without_outliers)}
-        non_outlier_cluster_sents = [cluster_sents[i] for i in range(num_classes_without_outliers)]
-        if len(non_outlier_clustered_reps) > 0:
-            generator = ClusterFactory.group_for_display(args, tokenizer, non_outlier_clustered_reps, non_outlier_cluster_sents)
-            for (words_in_cluster, sents, msg) in generator:
-                yield (words_in_cluster, sents, msg)
-
-        if -1 in clustered_reps:
-            outlier_clustered_reps = {0: clustered_reps[-1]}
-            outlier_cluster_sents = [cluster_sents[-1]]
-            generator = ClusterFactory.group_for_display(args, tokenizer, outlier_clustered_reps, outlier_cluster_sents)
-
-            for (words_in_cluster, sents, msg) in generator:
-                msg['header'] = "Outliers Cluster"
-                yield (words_in_cluster, sents, msg)
 
 def tokenize(tokenizer, word):
     token = tokenizer.encode(word, add_special_tokens=False)
@@ -283,8 +104,9 @@ def read_files(token, replacements_dir, inverted_index, sample_n_files, full_sto
         tokens = data['tokens']
         lengths = data['sent_lengths']
         reps = data['replacements']
+        doc_ids = data['doc_ids']
 
-        sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths))
+        sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths, doc_ids))
 
         reps_to_instances.populate(sent_and_positions, reps, full_stop_index)
 
@@ -293,113 +115,13 @@ def read_files(token, replacements_dir, inverted_index, sample_n_files, full_sto
     msg = f"Found Total of {n_matches} Matches in {len(files_with_pos)} Files."
     return reps_to_instances, msg
 
-def cluster(args, reps_to_instances, tokenizer):
-    sorted_reps_to_instances_data = [{'reps': k, 'examples': v} for k, v in sorted(reps_to_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
-    jaccard_matrix = Jaccard().pairwise_distance([x['reps'] for x in sorted_reps_to_instances_data])
-
-    clustering = ClusterFactory.make(args.cluster_alg, args)
-    clusters = clustering.fit_predict(jaccard_matrix)
-
-    clustered_reps = clustering.reps_to_their_clusters(clusters, sorted_reps_to_instances_data)
-
-    representative_sents = clustering.representative_sents(clusters, sorted_reps_to_instances_data, jaccard_matrix, args.n_sents_to_print)
-    clustering.group_for_display(args, tokenizer, clustered_reps, representative_sents)
-
-def cluster_words(args, reps_to_instances, tokenizer):
-    sorted_reps_to_instances_data = [{'reps': k, 'examples': v} for k, v in sorted(reps_to_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
-    jaccard_matrix = Jaccard().pairwise_distance([x['reps'] for x in sorted_reps_to_instances_data])
-
-    clustering = ClusterFactory.make(args.cluster_alg, args)
-    clusters = clustering.fit_predict(jaccard_matrix)
-
-    clustered_reps = clustering.reps_to_their_clusters(clusters, sorted_reps_to_instances_data)
-
-    representative_sents = clustering.representative_sents(clusters, sorted_reps_to_instances_data, jaccard_matrix, args.n_sents_to_print)
-    clustering.group_for_display(args, tokenizer, clustered_reps, representative_sents)
-
-class CommunityFinder:
-    def __init__(self, reps_to_instances):
-        self.create_cooccurrence_matrix(reps_to_instances)
-
-    def create_cooccurrence_matrix(self, reps_to_instances):
-        self.create_empty_cooccurrence_matrix(reps_to_instances)
-
-        for reps, sents in reps_to_instances.data.items():
-            combs = combinations(reps, 2)
-            for comb in combs:
-                self.update_matrix(comb, len(sents))
-
-    def update_matrix(self, comb, value):
-        key0 = self.token2node[comb[0]]
-        key1 = self.token2node[comb[1]]
-
-        self.cooccurrence_matrix[key0, key1] += value
-        self.cooccurrence_matrix[key1, key0] += value
-
-    def create_empty_cooccurrence_matrix(self, reps_to_instances):
-        node2token = []
-        for reps in reps_to_instances.data.keys():
-            for w in reps:
-                if w not in node2token:
-                    node2token.append(w)
-
-        mat_size = len(node2token)
-        self.node2token = node2token
-        self.token2node = {k: i for i, k in enumerate(self.node2token)}
-        self.cooccurrence_matrix = np.zeros((mat_size, mat_size))
-
-    def find(self, method='girvan_newman', top_n_nodes_to_keep=None):
-        G = nx.from_numpy_matrix(self.cooccurrence_matrix)
-        if top_n_nodes_to_keep:
-            cutoff_degree = sorted(dict(G.degree()).values())[-top_n_nodes_to_keep] # pylint: disable=invalid-unary-operand-type
-            nodes_with_lower_degree = [node for node, degree in dict(G.degree()).items() if degree < cutoff_degree]
-            G.remove_nodes_from(nodes_with_lower_degree)
-        if method == 'Girvan-Newman':
-            communities_generator = community.girvan_newman(G)
-            communities = next(communities_generator)
-        if method == 'Weighted Girvan-Newman':
-            from networkx import edge_betweenness_centrality as betweenness
-            def most_central_edge(G):
-                centrality = betweenness(G, weight="weight")
-                return max(centrality, key=centrality.get)
-
-            communities_generator = community.girvan_newman(G, most_valuable_edge=most_central_edge)
-            communities = next(communities_generator)
-        elif method == 'async LPA':
-            communities = list(community.label_propagation.asyn_lpa_communities(G, seed=SEED))
-        elif method == 'Weighted async LPA':
-            communities = list(community.label_propagation.asyn_lpa_communities(G, weight='weight', seed=SEED))
-        elif method == 'Clauset-Newman-Moore (no weights)':
-            communities = list(community.modularity_max.greedy_modularity_communities(G))
-        elif method == 'Louvain':
-            partition = community_louvain.best_partition(G, random_state=SEED)
-            communities = [[] for _ in range(max(partition.values())+1)]
-            for n, c in partition.items():
-                communities[c].append(n)
-
-        return sorted(map(sorted, communities), key=len, reverse=True)
-
-    def voting(self, communities, reps_to_instances):
-        community_tokens = [[self.node2token[c] for c in comm] for comm in communities]
-        token_to_comm = {t: i for i, c in enumerate(community_tokens) for t in c}
-        communities_sents_data = [[] for c in range(len(communities))]
-
-        for reps, sents in reps_to_instances.data.items():
-            counter = Counter(map(lambda r: token_to_comm[r], reps))
-            argmax = counter.most_common()[0][0]
-            for sent in sents:
-                communities_sents_data[argmax].append((sent, reps))
-
-        community_tokens, communities_sents_data = zip(*sorted(zip(community_tokens, communities_sents_data), key=lambda x: len(x[1]), reverse=True))
-        return community_tokens, communities_sents_data
-
-def find_sent_and_positions(token_idx_in_row, tokens, lengths):
+def find_sent_and_positions(token_idx_in_row, tokens, lengths, doc_ids):
     token_idx_in_row = np.array(token_idx_in_row)
     length_sum = 0
-    for length in lengths:
+    for length, doc_id in zip(lengths, doc_ids):
         token_location = token_idx_in_row[np.where(np.logical_and(token_idx_in_row >= length_sum, token_idx_in_row < length_sum + length))[0]]
         if len(token_location) > 0:
-            yield tokens[length_sum:length_sum + length], token_location-length_sum, token_location
+            yield tokens[length_sum:length_sum + length], token_location-length_sum, token_location, doc_id
         length_sum += length
 
 def read_inverted_index(inverted_index, token):
@@ -435,11 +157,6 @@ def prepare_arguments():
     args = parser.parse_args()
 
     return args
-
-def run_apriori(reps_to_instances, min_support):
-    keys = [k for k, v in reps_to_instances.data.items() for _ in range(len(v))]
-    itemsets, _ = itemsets_from_transactions(keys, min_support=min_support, output_transaction_ids=True)
-    return itemsets
 
 def assert_arguments(args):
     if args.cluster_alg == 'kmeans':

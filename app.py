@@ -6,13 +6,12 @@ import tokenizers
 import random
 
 from WSIatScale.analyze import (read_files,
-                                Jaccard,
                                 RepsToInstances,
-                                CommunityFinder,
                                 prepare_arguments,
-                                tokenize,
-                                ClusterFactory,
-                                run_apriori)
+                                tokenize)
+from WSIatScale.clustering import Jaccard, ClusterFactory
+from WSIatScale.community_detection import CommunityFinder
+from WSIatScale.apriori import run_apriori
 
 # from WSIatScale.create_inverted_index import index
 from streamlit_utils.utils import StreamlitTqdm
@@ -50,26 +49,40 @@ def cached_find_communities(community_finder, method, top_n_nodes_to_keep=None):
 def main():
     st.title('WSI at Scale')
 
-    dataset = st.sidebar.selectbox('Dataset', ('Wikipedia (RoBERTa)', 'Wikipedia (BERT)', 'CORD-19'), 1)
+    dataset = st.sidebar.selectbox('Dataset', ('Wikipedia', 'CORD-19', 'SemEval2010', 'SemEval2013'), 2)
     args = prepare_arguments()
-    if dataset == 'Wikipedia (RoBERTa)':
-        args.model_hg_path = 'roberta-large'
-        args.replacements_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all/replacements'
-        args.inverted_index = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all/inverted_index'
-        example_word = ' bass'
-        full_stop_index = 4
-    elif dataset == 'Wikipedia (BERT)':
-        args.model_hg_path = 'bert-large-cased-whole-word-masking'
-        args.replacements_dir = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/replacements'
-        args.inverted_index = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/inverted_index'
-        example_word = 'bass'
-        full_stop_index = 119
+    if dataset == 'Wikipedia':
+        model = st.sidebar.selectbox('Model', ('RoBERTa', 'BERT'), 0)
+        if model == 'RoBERTa':
+            args.model_hg_path = 'roberta-large'
+            args.replacements_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all/replacements'
+            args.inverted_index = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all/inverted_index'
+            example_word = ' bass'
+            full_stop_index = 4
+        else:
+            args.model_hg_path = 'bert-large-cased-whole-word-masking'
+            args.replacements_dir = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/replacements'
+            args.inverted_index = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/inverted_index'
+            example_word = 'bass'
+            full_stop_index = 119
     elif dataset == 'CORD-19':
         args.model_hg_path = 'allenai/scibert_scivocab_uncased'
         args.replacements_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/CORD-19/replacements/done'
         args.inverted_index = '/mnt/disks/mnt1/datasets/processed_for_WSI/CORD-19/inverted_index'
         example_word = 'race'
         full_stop_index = 205
+    elif dataset == 'SemEval2010':
+        args.model_hg_path = 'bert-large-uncased'
+        args.replacements_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased'
+        args.inverted_index = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased/inverted_index'
+        example_word = 'divide'
+        full_stop_index = None
+    elif dataset == 'SemEval2013':
+        args.model_hg_path = 'bert-large-uncased'
+        args.replacements_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2013/bert'
+        args.inverted_index = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2013/bert/inverted_index'
+        example_word = 'become'
+        full_stop_index = None
 
     tokenizer = cached_tokenizer(args.model_hg_path)
 
@@ -87,13 +100,16 @@ def main():
         args.word = w
 
         try:
-            token = tokenize(tokenizer, w)
+            if dataset == 'SemEval2010':
+                token = w #TODO, write nicer
+            else:
+                token = tokenize(tokenizer, w)
         except ValueError as e:
             st.write('Word given is more than a single wordpiece. Please choose a different word.')
 
         if token:
             curr_word_reps_to_instances = read_files_from_cache(args, tokenizer, dataset, token, n_reps, sample_n_files, full_stop_index)
-            curr_word_reps_to_instances.remove_query_word(tokenizer, w, merge_same_keys=True)
+            # curr_word_reps_to_instances.remove_query_word(tokenizer, w, merge_same_keys=True)
 
             if reps_to_instances is None:
                 reps_to_instances = curr_word_reps_to_instances
@@ -139,7 +155,7 @@ def display_clusters(args, tokenizer, reps_to_instances, cluster_alg, n_sents_to
 
     representative_sents = model.representative_sents(clusters, sorted_reps_to_instances, jaccard_distances, n_sents_to_print)
     st.header(f"Found {len(set(clusters))} clusters.")
-    for words_in_cluster, sents, msg in model.group_for_display(args, tokenizer, clustered_reps, representative_sents):
+    for words_in_cluster, sents_data, msg in model.group_for_display(args, tokenizer, clustered_reps, representative_sents):
         st.subheader(msg['header'])
         st.write(msg['found'])
         if words_in_cluster:
@@ -156,8 +172,8 @@ def display_clusters(args, tokenizer, reps_to_instances, cluster_alg, n_sents_to
             st.altair_chart(chart, use_container_width=True)
             if n_sents_to_print > 0:
                 st.write('**Exemplary Sentences**')
-                for sent in sents:
-                    st.write(f"* {tokenizer.decode(sent).lstrip()}")
+                for sent_data in sents_data:
+                    st.write(f"* {tokenizer.decode(sent_data.sent).lstrip()}")
 
     clustering_load_state.text('')
 
@@ -173,7 +189,7 @@ def display_communities(args, tokenizer, reps_to_instances):
 
     community_finder = cached_CommunityFinder(reps_to_instances)
     communities = cached_find_communities(community_finder, community_alg, top_n_nodes_to_keep)
-    communities_tokens, communities_sents_data = community_finder.voting(communities, reps_to_instances)
+    communities_tokens, communities_sents_data = community_finder.argmax_voting(communities, reps_to_instances)
 
     print_communities_graph(tokenizer,
                             community_finder,
@@ -202,8 +218,8 @@ def print_communities_graph(tokenizer,
             checkbox_text = checkbox_text[:487]+" ..."
         display_sents = st.checkbox(checkbox_text + f" - ({len(sents_data)} sents)")
         if display_sents:
-            for (sent, reps) in sents_data[:n_sents_to_print]:
-                text = f"{tokenizer.decode(sent).lstrip()}"
+            for (inst, reps) in sents_data[:n_sents_to_print]:
+                text = f"{tokenizer.decode(inst.sent).lstrip()}"
                 reps_text = " ".join([tokenizer.decode([rep]).lstrip() for rep in reps])
                 st.write(f"* **{reps_text}:** ", text)
     if num_skipped > 0:
@@ -216,12 +232,6 @@ def print_communities_graph(tokenizer,
 
     G = nx.from_numpy_matrix(community_finder.cooccurrence_matrix)
 
-    node2word = {n: tokenizer.decode([community_finder.node2token[n]]) for n in G.nodes()}
-    words_i_care_about = ['guitar', 'violin', 'ass', 'fish', 'cod', 'shark', 'trout', 'fishing', 'tuna', 'shrimp', 'carp', 'salmon']
-    extended_words_i_care_about = []
-    for w in words_i_care_about:
-        extended_words_i_care_about.extend([w, f" {w}", w.title(), f" {w.title()}"])
-    node2word = {k: v for k, v in node2word.items() if v in extended_words_i_care_about}
 
     pos = nx.spring_layout(G, seed=SEED)
     plt.axis('off')
@@ -229,11 +239,13 @@ def print_communities_graph(tokenizer,
     sorted_partition_values = [partition[n] for n in range(max(partition) + 1)]
     nx.draw_networkx_nodes(G, pos, node_size=100, cmap=plt.cm.RdYlBu, node_color=sorted_partition_values)
     nx.draw_networkx_edges(G, pos, alpha=0.3)
-    nx.draw_networkx_labels(G, pos, node2word, font_size=8)
+    if len(G.nodes()) <= 100:
+        node2word = {n: tokenizer.decode([community_finder.node2token[n]]) for n in G.nodes()}
+        nx.draw_networkx_labels(G, pos, node2word, font_size=8)
 
-    plt.savefig("Graph.png", format="PNG")
+    plt.savefig("/tmp/Graph.png", format="PNG")
 
-    image = Image.open('Graph.png')
+    image = Image.open('/tmp/Graph.png')
     st.image(image, use_column_width=True)
 
 def prepare_choices(args):
