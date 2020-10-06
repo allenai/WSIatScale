@@ -12,20 +12,30 @@ SEED = 111
 
 MAX_REPS = 100
 
+REPS_DIR = 'replacements'
+INVERTED_INDEX_DIR = 'inverted_index'
+LEMMATIZED_VOCAB_FILE = 'lemmatized_vocab.json'
+
 @dataclass
 class Instance:
     doc_id: int
     sent: np.array
 
 class RepsToInstances:
-    def __init__(self):
+    def __init__(self, lemmatized_vocab_path):
         self.data = defaultdict(list)
+        self.lemmatized_vocab_path = lemmatized_vocab_path
+        if self.lemmatized_vocab_path:
+            self.lemmatized_vocab = {int(k): v for k, v in json.load(open(self.lemmatized_vocab_path, 'r')).items()}
 
     def populate(self, sent_and_positions, reps, full_stop_index):
         for sent, token_pos_in_sent, global_token_pos, doc_id in sent_and_positions:
             for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
                 single_sent = self.find_single_sent_around_token(sent, local_pos, full_stop_index)
-                key = tuple(reps[global_pos])
+                key = reps[global_pos]
+                if self.lemmatized_vocab:
+                    key = dict.fromkeys(map(lambda x: self.lemmatized_vocab[x], key))
+                key = tuple(key)
                 value = single_sent
                 self.data[key].append(Instance(doc_id, value))
 
@@ -33,7 +43,7 @@ class RepsToInstances:
         if n_reps == MAX_REPS:
             return self
 
-        reps_to_instances = RepsToInstances()
+        reps_to_instances = RepsToInstances(self.lemmatized_vocab_path)
         for key, sents in self.data.items():
             new_key = key[:n_reps]
             reps_to_instances.data[new_key].extend(sents)
@@ -48,7 +58,7 @@ class RepsToInstances:
             if len(t) == 1:
                 similar_tokens.append(t[0])
 
-        reps_to_instances = RepsToInstances()
+        reps_to_instances = RepsToInstances(self.lemmatized_vocab_path)
         for key, sents in self.data.items():
             new_key = tuple(t for t in key if t not in similar_tokens)
             if merge_same_keys:
@@ -89,15 +99,17 @@ def tokenize(tokenizer, word):
     token = token[0]
     return token
 
-def read_files(token, replacements_dir, inverted_index, sample_n_files, full_stop_index, bar=tqdm):
-    files_with_pos = read_inverted_index(inverted_index, token)
+def read_files(token, data_dir, sample_n_files, full_stop_index, should_lemmatize=True, bar=tqdm):
+    files_with_pos = read_inverted_index(os.path.join(data_dir, INVERTED_INDEX_DIR), token)
     if sample_n_files > 0 and len(files_with_pos) > sample_n_files:
         random.seed(SEED)
         files_with_pos = random.sample(files_with_pos, sample_n_files)
 
     n_matches = 0
-    reps_to_instances = RepsToInstances()
+    lemmatized_vocab_path = os.path.join(data_dir, LEMMATIZED_VOCAB_FILE) if should_lemmatize else None
+    reps_to_instances = RepsToInstances(lemmatized_vocab_path)
 
+    replacements_dir = os.path.join(data_dir, REPS_DIR)
     for file, token_idx_in_row in bar(files_with_pos):
         data = np.load(os.path.join(replacements_dir, f"{file}.npz"))
 

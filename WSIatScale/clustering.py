@@ -1,9 +1,15 @@
 # pylint: disable=no-member
 import numpy as np
-from collections import Counter
+from collections import Counter, defaultdict
+
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import pdist, cdist
 
 from sklearn import cluster as sk_cluster
+from sklearn.feature_extraction import DictVectorizer
+from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.metrics import pairwise_distances
+
 from sklearn_extra.cluster import KMedoids
 
 SEED = 111
@@ -42,6 +48,7 @@ class ClusterFactory():
         if alg_name == 'kmedoids': return MyKMedoids(*args, **kwargs)
         if alg_name == 'agglomerative_clustering': return MyAgglomerativeClustering(*args, **kwargs)
         if alg_name == 'dbscan': return MyDBSCAN(*args, **kwargs)
+        if alg_name == 'bow hierarchical': return MyBOWHierarchicalLinkage(*args, **kwargs)
 
     def reps_to_their_clusters(self, clusters, sorted_reps_to_instances_data):
         clustered_reps = {i: [] for i in self.clusters_range(clusters)}
@@ -184,6 +191,90 @@ class MyDBSCAN(sk_cluster.DBSCAN, ClusterFactory):
                 msg['header'] = "Outliers Cluster"
                 yield (words_in_cluster, sents, msg)
 
+class MyBOWHierarchicalLinkage(ClusterFactory):
+    #This can possibly have a rewrite. Too many loops.
+    def __init__(self):
+        self.use_tfidf = True
+        self.metric = 'cosine'
+        self.method = 'average'
+        self.max_number_senses = 7
+        self.min_sense_instances = 2
+
+    def fit_predict(self, reps_and_instances):
+        labels, doc_ids, rep_mat = self.get_initial_labels(reps_and_instances)
+        n_senses = np.max(labels) + 1
+
+        big_senses, doc_id_to_cluster = self.populate_doc_id_to_clusters(doc_ids, labels)
+
+        sense_means = self.find_sense_means(n_senses, rep_mat, labels)
+
+        sense_remapping, labels = self.merge_small_senses(sense_means, n_senses, big_senses, labels)
+
+        senses = self.new_senses_mapping(doc_id_to_cluster, sense_remapping)
+        return senses
+
+    def get_initial_labels(self, reps_and_instances):
+        reps_and_sent_data = [(reps_and_sents_data['reps'], sent_data) for reps_and_sents_data in reps_and_instances for sent_data in reps_and_sents_data['examples']]
+        reps = [{r:1 for r in reps} for reps, _ in reps_and_sent_data]
+        doc_ids = [sent_data.doc_id for _, sent_data in reps_and_sent_data]
+        dict_vectorizer = DictVectorizer(sparse=False)
+        rep_mat = dict_vectorizer.fit_transform(reps)
+        if self.use_tfidf:
+            rep_mat = TfidfTransformer(norm=None).fit_transform(rep_mat).todense()
+
+        condensed_distance_mat = pdist(rep_mat, metric=self.metric)
+        hierarchical_linkage = linkage(condensed_distance_mat, method=self.method, metric=self.metric)
+        distance_threshold = hierarchical_linkage[-self.max_number_senses, 2]
+        labels = fcluster(hierarchical_linkage, distance_threshold, 'distance') - 1
+        return labels, doc_ids, rep_mat
+
+    def merge_small_senses(self, sense_means, n_senses, big_senses, labels):
+        if self.min_sense_instances > 0:
+            sense_remapping = {}
+            distance_mat = cdist(sense_means, sense_means, metric='cosine')
+            closest_senses = np.argsort(distance_mat, )[:, ]
+
+            for sense_idx in range(n_senses):
+                for closest_sense in closest_senses[sense_idx]:
+                    if closest_sense in big_senses:
+                        sense_remapping[sense_idx] = closest_sense
+                        break
+            new_order_of_senses = list(set(sense_remapping.values()))
+            sense_remapping = dict((k, new_order_of_senses.index(v)) for k, v in sense_remapping.items())
+
+            labels = np.array([sense_remapping[x] for x in labels])
+        return sense_remapping, labels
+
+    def populate_doc_id_to_clusters(self, doc_ids, labels):
+        senses_n_domminates = defaultdict(int)
+        doc_id_to_cluster = {}
+        for i, doc_id in enumerate(doc_ids):
+            doc_id_clusters = labels[i]
+            doc_id_to_cluster[doc_id] = doc_id_clusters
+            senses_n_domminates[doc_id_clusters] += 1
+
+        big_senses = [x for x in senses_n_domminates if senses_n_domminates[x] >= self.min_sense_instances]
+        return big_senses, doc_id_to_cluster
+
+    @staticmethod
+    def new_senses_mapping(doc_id_to_cluster, sense_remapping):
+        senses = {}
+        for doc_id, sense_idx in doc_id_to_cluster.items():
+            if sense_remapping:
+                sense_idx = sense_remapping[sense_idx]
+            senses[doc_id] = sense_idx
+        return senses
+
+    @staticmethod
+    def find_sense_means(n_senses, transformed, labels):
+        sense_means = np.zeros((n_senses, transformed.shape[1]))
+        for sense_idx in range(n_senses):
+            instances_in_sense = np.where(labels == sense_idx)
+            cluster_center = np.mean(np.array(transformed)[instances_in_sense], 0)
+            sense_means[sense_idx] = cluster_center
+        return sense_means
+
+# Deprecated
 def cluster(args, reps_to_instances, tokenizer):
     sorted_reps_to_instances_data = [{'reps': k, 'examples': v} for k, v in sorted(reps_to_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
     jaccard_matrix = Jaccard().pairwise_distance([x['reps'] for x in sorted_reps_to_instances_data])

@@ -1,6 +1,5 @@
 import argparse
 import json
-from collections import defaultdict
 import os
 
 import numpy as np
@@ -65,6 +64,8 @@ def index(tokenizer, words, replacements_dir, outdir, dataset, bar=tqdm, which_f
                         index_dict[token] = {file_id: valid_positions}
                     else:
                         index_dict[token][file_id] = valid_positions
+        except:
+            continue
 
     for token, positions in index_dict.items():
         token_outfile = os.path.join(outdir, f"{token}.jsonl")

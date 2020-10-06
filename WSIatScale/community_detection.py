@@ -15,7 +15,6 @@ class CommunityFinder:
         self.create_cooccurrence_matrix(reps_to_instances)
 
     def create_cooccurrence_matrix(self, reps_to_instances):
-
         for reps, sents in reps_to_instances.data.items():
             combs = combinations(reps, 2)
             for comb in combs:
@@ -36,13 +35,12 @@ class CommunityFinder:
                     node2token.append(w)
 
         mat_size = len(node2token)
-        node2token = node2token
         token2node = {k: i for i, k in enumerate(node2token)}
         cooccurrence_matrix = np.zeros((mat_size, mat_size))
 
         return node2token, token2node, cooccurrence_matrix
 
-    def find(self, method='girvan_newman', top_n_nodes_to_keep=None):
+    def find(self, method='Louvain', top_n_nodes_to_keep=None):
         G = nx.from_numpy_matrix(self.cooccurrence_matrix)
         if top_n_nodes_to_keep:
             cutoff_degree = sorted(dict(G.degree()).values())[-top_n_nodes_to_keep] # pylint: disable=invalid-unary-operand-type
@@ -66,9 +64,9 @@ class CommunityFinder:
         elif method == 'Clauset-Newman-Moore (no weights)':
             communities = list(community.modularity_max.greedy_modularity_communities(G))
         elif method == 'Louvain':
-            partition = community_louvain.best_partition(G, random_state=SEED)
-            communities = [[] for _ in range(max(partition.values())+1)]
-            for n, c in partition.items():
+            best_partition = community_louvain.best_partition(G, random_state=SEED)
+            communities = [[] for _ in range(max(best_partition.values())+1)]
+            for n, c in best_partition.items():
                 communities[c].append(n)
 
         return sorted(map(sorted, communities), key=len, reverse=True)

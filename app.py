@@ -17,11 +17,15 @@ from WSIatScale.apriori import run_apriori
 from streamlit_utils.utils import StreamlitTqdm
 import altair as alt
 
+import networkx as nx
+import matplotlib.pyplot as plt
+from PIL import Image
+
 SEED = 111
 
 @st.cache(suppress_st_warning=True, allow_output_mutation=True)
-def cached_read_files(token, replacements_dir, inverted_index, sample_n_files, full_stop_index):
-    return read_files(token, replacements_dir, inverted_index, sample_n_files, full_stop_index, bar=StreamlitTqdm)
+def cached_read_files(token, data_dir, sample_n_files, full_stop_index):
+    return read_files(token, data_dir, sample_n_files, full_stop_index, bar=StreamlitTqdm)
 
 @st.cache(hash_funcs={RepsToInstances: id}, suppress_st_warning=True, allow_output_mutation=True)
 def cached_populate_specific_size(all_reps_to_instances, n_reps):
@@ -34,9 +38,9 @@ def cached_tokenizer(model_hg_path):
 
 @st.cache(hash_funcs={RepsToInstances: id}, suppress_st_warning=True, allow_output_mutation=True)
 def cached_jaccard_distances(reps_to_instances):
-    sorted_reps_to_instances = [{'reps': k, 'examples': v} for k, v in sorted(reps_to_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
-    jaccard_distances = Jaccard().pairwise_distance([x['reps'] for x in sorted_reps_to_instances])
-    return jaccard_distances, sorted_reps_to_instances
+    reps_and_instances = [{'reps': k, 'examples': v} for k, v in sorted(reps_to_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
+    jaccard_distances = Jaccard().pairwise_distance([x['reps'] for x in reps_and_instances])
+    return jaccard_distances, reps_and_instances
 
 @st.cache(hash_funcs={RepsToInstances: id}, suppress_st_warning=True, allow_output_mutation=True)
 def cached_CommunityFinder(reps_to_instances):
@@ -55,32 +59,27 @@ def main():
         model = st.sidebar.selectbox('Model', ('RoBERTa', 'BERT'), 0)
         if model == 'RoBERTa':
             args.model_hg_path = 'roberta-large'
-            args.replacements_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all/replacements'
-            args.inverted_index = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all/inverted_index'
+            args.data_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all'
             example_word = ' bass'
             full_stop_index = 4
         else:
             args.model_hg_path = 'bert-large-cased-whole-word-masking'
-            args.replacements_dir = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/replacements'
-            args.inverted_index = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/inverted_index'
+            args.data_dir = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/'
             example_word = 'bass'
             full_stop_index = 119
     elif dataset == 'CORD-19':
         args.model_hg_path = 'allenai/scibert_scivocab_uncased'
-        args.replacements_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/CORD-19/replacements/done'
-        args.inverted_index = '/mnt/disks/mnt1/datasets/processed_for_WSI/CORD-19/inverted_index'
+        args.data_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/CORD-19'
         example_word = 'race'
         full_stop_index = 205
     elif dataset == 'SemEval2010':
         args.model_hg_path = 'bert-large-uncased'
-        args.replacements_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased'
-        args.inverted_index = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased/inverted_index'
-        example_word = 'divide'
+        args.data_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased'
+        example_word = 'guarantee'
         full_stop_index = None
     elif dataset == 'SemEval2013':
         args.model_hg_path = 'bert-large-uncased'
-        args.replacements_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2013/bert'
-        args.inverted_index = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2013/bert/inverted_index'
+        args.data_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2013/bert-large-uncased'
         example_word = 'become'
         full_stop_index = None
 
@@ -100,16 +99,13 @@ def main():
         args.word = w
 
         try:
-            if dataset == 'SemEval2010':
-                token = w #TODO, write nicer
-            else:
-                token = tokenize(tokenizer, w)
+            token = tokenize(tokenizer, w) if dataset != 'SemEval2010' else w
         except ValueError as e:
             st.write('Word given is more than a single wordpiece. Please choose a different word.')
 
         if token:
             curr_word_reps_to_instances = read_files_from_cache(args, tokenizer, dataset, token, n_reps, sample_n_files, full_stop_index)
-            # curr_word_reps_to_instances.remove_query_word(tokenizer, w, merge_same_keys=True)
+            curr_word_reps_to_instances.remove_query_word(tokenizer, w, merge_same_keys=True)
 
             if reps_to_instances is None:
                 reps_to_instances = curr_word_reps_to_instances
@@ -120,7 +116,7 @@ def main():
     action = st.sidebar.selectbox(
         'How to Group Instances',
         ('Select Action', 'Group by Communities', 'Cluster', 'Apriori'),
-        index=1)
+        index=2)
 
     if reps_to_instances and action == 'Cluster':
         cluster_alg, n_sents_to_print = prepare_choices(args)
@@ -134,7 +130,7 @@ def main():
 
 def read_files_from_cache(args, tokenizer, dataset, token, n_reps, sample_n_files, full_stop_index):
     try:
-        all_reps_to_instances, msg = cached_read_files(token, args.replacements_dir, args.inverted_index, sample_n_files, full_stop_index)
+        all_reps_to_instances, msg = cached_read_files(token, args.data_dir, sample_n_files, full_stop_index)
         reps_to_instances = cached_populate_specific_size(all_reps_to_instances, n_reps)
         st.write(msg)
         return reps_to_instances
@@ -142,18 +138,22 @@ def read_files_from_cache(args, tokenizer, dataset, token, n_reps, sample_n_file
         st.write(e)
         # if st.button('Index this word'):
         #     st.write('This might take a few minutes.')
-        #     index(tokenizer, args.word, args.replacements_dir, args.inverted_index, dataset, bar=StreamlitTqdm)
+        #     index(tokenizer, args.word, args.data_dir, dataset, bar=StreamlitTqdm)
 
 def display_clusters(args, tokenizer, reps_to_instances, cluster_alg, n_sents_to_print):
     clustering_load_state = st.text('Clustering...')
-    jaccard_distances, sorted_reps_to_instances = cached_jaccard_distances(reps_to_instances)
+    if cluster_alg != 'BOW Hierarchical':
+        jaccard_distances, reps_and_instances = cached_jaccard_distances(reps_to_instances)
+        model = ClusterFactory.make(cluster_alg, args)
+        clusters = model.fit_predict(jaccard_distances)
+    else:
+        reps_and_instances = [{'reps': k, 'examples': v} for k, v in sorted(reps_to_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
+        model = ClusterFactory.make(cluster_alg, args)
+        clusters = model.fit_predict(reps_and_instances)
 
-    model = ClusterFactory.make(cluster_alg, args)
-    clusters = model.fit_predict(jaccard_distances)
+    clustered_reps = model.reps_to_their_clusters(clusters, reps_and_instances)
 
-    clustered_reps = model.reps_to_their_clusters(clusters, sorted_reps_to_instances)
-
-    representative_sents = model.representative_sents(clusters, sorted_reps_to_instances, jaccard_distances, n_sents_to_print)
+    representative_sents = model.representative_sents(clusters, reps_and_instances, jaccard_distances, n_sents_to_print)
     st.header(f"Found {len(set(clusters))} clusters.")
     for words_in_cluster, sents_data, msg in model.group_for_display(args, tokenizer, clustered_reps, representative_sents):
         st.subheader(msg['header'])
@@ -226,12 +226,7 @@ def print_communities_graph(tokenizer,
         st.write(f"Skipped {num_skipped} communities with less than {at_least_n_matches} sentences.")
 
     # Print Graph
-    import networkx as nx
-    import matplotlib.pyplot as plt
-    from PIL import Image
-
     G = nx.from_numpy_matrix(community_finder.cooccurrence_matrix)
-
 
     pos = nx.spring_layout(G, seed=SEED)
     plt.axis('off')
@@ -251,8 +246,8 @@ def print_communities_graph(tokenizer,
 def prepare_choices(args):
     cluster_alg = st.selectbox(
         'Clustering Algorithm',
-        ('KMedoids', 'agglomerative_clustering', 'dbscan', 'kmeans'),
-        index=0)
+        ('KMedoids', 'agglomerative_clustering', 'dbscan', 'kmeans', 'BOW Hierarchical'),
+        index=4)
 
     if cluster_alg == 'kmeans' or cluster_alg == 'KMedoids':
         n_clusters = st.slider('Num of Clusters', 1, 20, 2)
