@@ -12,20 +12,20 @@ from transformers.data.data_collator import default_data_collator
 from transformers import AutoTokenizer, BertForMaskedLM, RobertaForMaskedLM
 
 from adaptive_sampler import MaxTokensBatchSampler, data_collator_for_adaptive_sampler
-from data_processors import CORDDataset, WikiDataset # pylint: disable=import-error
+from data_processors import CORDDataset, WikiDataset, SemEval2010Dataset, SemEval2013Dataset # pylint: disable=import-error
 
-TOP_N_WORDS = 100
+REPS_DIR = 'replacements'
+
+TOP_N_WORDS = 100 + 1 #removing identity replacement
 PAD_ID = 0
-dataset_params = {'cord': {'dataset_class': CORDDataset,
-                           'model_class': BertForMaskedLM,
-                           'model_hg_path': 'allenai/scibert_scivocab_uncased',},
-                  'wiki-roberta': {'dataset_class': WikiDataset,
-                                   'model_class': RobertaForMaskedLM,
-                                   'model_hg_path': 'roberta-large',},
-                  'wiki-bert': {'dataset_class': WikiDataset,
-                                'model_class': BertForMaskedLM,
-                                'model_hg_path': 'bert-large-cased-whole-word-masking',},
-                 }
+dataset_params = {'cord': {'dataset_class': CORDDataset},
+                  'wiki': {'dataset_class': WikiDataset},
+                  'SemEval2010': {'dataset_class': SemEval2010Dataset},
+                  'SemEval2013': {'dataset_class': SemEval2013Dataset}}
+model_params = {'bert-large-cased-whole-word-masking': {'model_class': BertForMaskedLM, 'model_hg_path': 'bert-large-cased-whole-word-masking'},
+    'bert-large-uncased' : {'model_class': BertForMaskedLM, 'model_hg_path': 'bert-large-uncased'},
+    'RoBERTa': {'model_class': RobertaForMaskedLM, 'model_hg_path': 'roberta-large'},
+    'scibert': {'model_class': BertForMaskedLM, 'model_hg_path': 'allenai/scibert_scivocab_uncased'}}
 
 def main(args):
     device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
@@ -33,8 +33,8 @@ def main(args):
     dataset_class = dataset_params[args.dataset]['dataset_class']
 
     i = 0
-    similar_files = sorted([f for f in os.listdir(args.data_dir) if starts_with_and_in_range(f, args.starts_with, args.files_range)])
-    for input_file in tqdm(similar_files):
+    files = read_files_with_conditions(args)
+    for input_file in tqdm(files):
         dataset = dataset_class(args, input_file, tokenizer, cache_dir='/tmp/')
         dataloader = simple_dataloader(args, dataset) if args.simple_sampler else adaptive_dataloader(args, dataset)
 
@@ -46,20 +46,29 @@ def main(args):
                 normalized = last_hidden_states.softmax(-1)
                 probs, indices = normalized.topk(TOP_N_WORDS)
 
-                write_replacements_to_file(f"{args.out_dir}/{input_file[:-6]}-{i}.npz", doc_ids, inputs, indices, probs)
+                write_replacements_to_file(os.path.join(args.out_dir, REPS_DIR, f"{input_file.split('.')[0]}-{i}.npz"), doc_ids, inputs, indices, probs)
             i += 1
 
-def starts_with_and_in_range(f, starts_with, files_range):
-    ret = f.startswith(starts_with)
-    if files_range is not None:
+def read_files_with_conditions(args):
+    def files_in_range(f, files_range):
         min_id, max_id = files_range.split('-')
         id = int(''.join(x for x in f if x.isdigit()))
-        ret = ret and id >= int(min_id) and id <= int(max_id)
-    return ret
+        return int(min_id) <= id <= int(max_id)
+
+    if args.no_input_file:
+        return [args.dataset]
+
+    files = os.listdir(args.data_dir)
+    if args.starts_with:
+        files = sorted([f for f in files if f.startswith(args.starts_with)])
+    if args.files_range:
+        files = sorted([f for f in files if files_in_range(f, args.files_range)])
+    return files
+
 
 def initialize_models(device, args):
-    model_hg_path = dataset_params[args.dataset]['model_hg_path']
-    model_class = dataset_params[args.dataset]['model_class']
+    model_hg_path = model_params[args.model]['model_hg_path']
+    model_class = model_params[args.model]['model_class']
     tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
     model = model_class.from_pretrained(model_hg_path)
     model.to(device)
@@ -96,21 +105,26 @@ def simple_dataloader(args, dataset):
     return dataloader
 
 def write_replacements_to_file(outfile, doc_ids, inputs, replacements, probs):
-    b, l = inputs['input_ids'].size()
     attention_mask = inputs['attention_mask'].bool()
 
-    doc_ids = doc_ids.cpu().numpy().astype(np.int32)
-    sent_lengths = inputs['attention_mask'].sum(1).cpu().numpy().astype(np.int16)
-    tokens = inputs['input_ids'].masked_select(attention_mask).cpu().numpy().astype(np.uint16)
-    replacements = replacements.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy().astype(np.uint16)
-    probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS).cpu().numpy().astype(np.float16)
+    sent_lengths = inputs['attention_mask'].sum(1)
+    tokens = inputs['input_ids'].masked_select(attention_mask)
+    replacements = replacements.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS)
+    probs = probs.masked_select(attention_mask.unsqueeze(2)).view(-1, TOP_N_WORDS)
+
+    identity_replacements = replacements == tokens.unsqueeze(1)
+    has_identity_replacements = identity_replacements.sum(1) == 0
+    identity_replacements[has_identity_replacements, TOP_N_WORDS-1] = True
+    reps_without_identity = replacements.masked_select(~identity_replacements).view(-1, TOP_N_WORDS-1)
+    probs_without_identity = probs.masked_select(~identity_replacements).view(-1, TOP_N_WORDS-1)
+    normalized_probs_without_identity = probs_without_identity/probs_without_identity.sum(1).unsqueeze(1)
 
     np.savez(outfile,
-        doc_ids=doc_ids,
-        sent_lengths=sent_lengths,
-        tokens=tokens,
-        replacements=replacements,
-        probs=probs,
+        doc_ids=doc_ids.cpu().numpy().astype(np.int32),
+        sent_lengths=sent_lengths.cpu().numpy().astype(np.int16),
+        tokens=tokens.cpu().numpy().astype(np.uint16),
+        replacements=reps_without_identity.cpu().numpy().astype(np.uint16),
+        probs=normalized_probs_without_identity.cpu().numpy().astype(np.float16),
     )
 
 def dict_to_device(inputs, device):
@@ -123,14 +137,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--data_dir", type=str, required=True)
-    parser.add_argument("--starts_with", type=str, required=True)
+    parser.add_argument("--starts_with", type=str)
     parser.add_argument("--files_range", type=str, help="should be splited with `-`")
     parser.add_argument("--out_dir", type=str, default="replacements")
-    parser.add_argument("--dataset", type=str, required=True, choices=['cord', 'wiki-roberta', 'wiki-bert'])
+    parser.add_argument("--dataset", type=str, required=True, choices=['cord', 'wiki', 'SemEval2010', 'SemEval2013'])
+    parser.add_argument("--model", type=str, required=True, choices=['bert-large-cased-whole-word-masking', 'bert-large-uncased', 'RoBERTa', 'scibert'])
     parser.add_argument("--local_rank", type=int, default=-1, help="Not Maintained")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--max_seq_length", type=int, default=512)
     parser.add_argument("--max_tokens_per_batch", type=int, default=-1)
+    parser.add_argument("--no_input_file", action="store_true", help="Go over all files in one batch")
     parser.add_argument("--overwrite_cache", action="store_true")
     parser.add_argument("--simple_sampler", action="store_true")
     parser.add_argument("--cpu", action="store_true")
@@ -139,7 +155,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.simple_sampler:
         assert args.max_tokens_per_batch == -1 and \
-            args.batch_size > 1 and \
             args.max_seq_length > -1, \
             "Expecting arguments for simple sampler"
     else:
@@ -149,5 +164,6 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.out_dir):
         os.makedirs(args.out_dir)
+        os.makedirs(os.path.join(args.out_dir, REPS_DIR))
 
     main(args)

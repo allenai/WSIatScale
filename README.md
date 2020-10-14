@@ -27,8 +27,14 @@ python write_mask_preds.py --data_dir ../../datasets/wiki-ann/wiki-ann/ --starts
 
 ## analyze.py Script
 
-This is accessed from `wsi_at_scale_streamlit.py`
+This is accessed from `app.py`
 
-## wsi_at_scale_streamlit.py Script
+## app.py Script
 
-Run by `streamlit run wsi_at_scale_streamlit.py`
+Run by `streamlit run app.py`
+
+# Quick Access For debugging
+```
+from transformers import AutoTokenizer; model_hg_path = 'bert-large-uncased'; tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
+t = ...
+tokenizer.decode([])

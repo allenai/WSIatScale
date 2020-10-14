@@ -1,9 +1,9 @@
 import argparse
-from collections import defaultdict
 from dataclasses import dataclass
 import json
 import os
 import random
+from typing import Tuple
 
 import numpy as np
 from tqdm import tqdm
@@ -12,50 +12,82 @@ SEED = 111
 
 MAX_REPS = 100
 
+REPS_DIR = 'replacements'
+INVERTED_INDEX_DIR = 'inverted_index'
+LEMMATIZED_VOCAB_FILE = 'lemmatized_vocab.json'
+
 @dataclass
 class Instance:
     doc_id: int
+    reps: Tuple
+    probs: np.array
     sent: np.array
 
-class RepsToInstances:
-    def __init__(self):
-        self.data = defaultdict(list)
+class RepInstances:
+    def __init__(self, lemmatized_vocab_path=None):
+        self.data = []
+        self.lemmatized_vocab_path = lemmatized_vocab_path
+        if self.lemmatized_vocab_path:
+            self.lemmatized_vocab = {int(k): v for k, v in json.load(open(self.lemmatized_vocab_path, 'r')).items()}
 
-    def populate(self, sent_and_positions, reps, full_stop_index):
+    def populate(self, sent_and_positions, reps, probs, full_stop_index):
         for sent, token_pos_in_sent, global_token_pos, doc_id in sent_and_positions:
             for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
                 single_sent = self.find_single_sent_around_token(sent, local_pos, full_stop_index)
-                key = tuple(reps[global_pos])
-                value = single_sent
-                self.data[key].append(Instance(doc_id, value))
+                curr_reps = reps[global_pos]
+                curr_probs = probs[global_pos]
+                if self.lemmatized_vocab_path:
+                    curr_reps, curr_probs = self.lemmatize_reps_and_probs(curr_reps, curr_probs)
+                self.data.append(Instance(doc_id=doc_id,
+                                          reps=curr_reps,
+                                          probs=curr_probs,
+                                          sent=single_sent))
+
+    def lemmatize_reps_and_probs(self, curr_reps, curr_probs):
+        curr_reps = list(map(lambda x: self.lemmatized_vocab[x], curr_reps))
+        new_reps = []
+        seen_lemmas = set()
+        element_indices_to_delete = []
+        for i, rep in enumerate(curr_reps):
+            if rep in seen_lemmas:
+                element_indices_to_delete.append(i)
+            else:
+                new_reps.append(rep)
+            seen_lemmas.add(rep)
+        curr_probs = np.delete(curr_probs, element_indices_to_delete)
+        return new_reps, curr_probs
 
     def populate_specific_size(self, n_reps):
         if n_reps == MAX_REPS:
             return self
 
-        reps_to_instances = RepsToInstances()
-        for key, sents in self.data.items():
-            new_key = key[:n_reps]
-            reps_to_instances.data[new_key].extend(sents)
+        for instance in self.data:
+            instance.reps = instance.reps[:n_reps]
+            instance.probs = instance.probs[:n_reps]
+            instance.probs /= instance.probs.sum()
 
-        return reps_to_instances
-
-    def remove_query_word(self, tokenizer, word, merge_same_keys):
-        similar_words = [word.lower().lstrip(), f" {word.lower().lstrip()}", word.lower().title().lstrip(), f" {word.title().lstrip()}"]
-        similar_tokens = []
-        for w in similar_words:
+    def remove_certain_words(self, remove_query_word, remove_stop_words, tokenizer, word):
+        words_to_remove = []
+        if remove_query_word:
+            words_to_remove += [word.lower().lstrip(), f" {word.lower().lstrip()}", word.lower().title().lstrip(), f" {word.title().lstrip()}"]
+        tokens_to_remove = []
+        for w in words_to_remove:
             t = tokenizer.encode(w, add_special_tokens=False)
             if len(t) == 1:
-                similar_tokens.append(t[0])
+                tokens_to_remove.append(t[0])
+        if remove_stop_words:
+            tokens_to_remove += [2022, 1997, 2012, 2011, 1999, 1012, 1024, 1010, 1998, 1996, 2007, 1037, 2049, 1013, 2025, 1011, 1000]
+                              # ['be', 'of', 'at', 'by', 'in', '.', ':', ',', 'and', 'the', 'with', 'a', 'its', '/', 'not', '-', '"']
 
-        reps_to_instances = RepsToInstances()
-        for key, sents in self.data.items():
-            new_key = tuple(t for t in key if t not in similar_tokens)
-            if merge_same_keys:
-                new_key = tuple(sorted(new_key))
-            reps_to_instances.data[new_key].extend(sents)
-
-        self.data = reps_to_instances.data
+        for instance in self.data:
+            if not all([tokenizer.decode([r]).startswith('#') for r in instance.reps]):
+                new_reps, new_probs = zip(*[(r, p) for r, p in zip(instance.reps, instance.probs) if not tokenizer.decode([r]).startswith('#')])
+            if not all([r in tokens_to_remove for r in new_reps]):
+                new_reps, new_probs = zip(*[(r, p) for r, p in zip(new_reps, new_probs) if r not in tokens_to_remove])
+            if len(new_reps) != len(instance.reps):
+                instance.reps = new_reps
+                instance.probs = np.array(new_probs)
+                instance.probs /= instance.probs.sum()
 
     @staticmethod
     def find_single_sent_around_token(concated_sents, local_pos, full_stop_index):
@@ -89,39 +121,43 @@ def tokenize(tokenizer, word):
     token = token[0]
     return token
 
-def read_files(token, replacements_dir, inverted_index, sample_n_files, full_stop_index, bar=tqdm):
-    files_with_pos = read_inverted_index(inverted_index, token)
-    if sample_n_files > 0 and len(files_with_pos) > sample_n_files:
+def read_files(token, data_dir, sample_n_files, full_stop_index, should_lemmatize=False, bar=tqdm):
+    files_to_pos = read_inverted_index(os.path.join(data_dir, INVERTED_INDEX_DIR), token)
+    if sample_n_files > 0 and len(files_to_pos) > sample_n_files:
         random.seed(SEED)
-        files_with_pos = random.sample(files_with_pos, sample_n_files)
+        sampled_keys = random.sample(files_to_pos.keys(), sample_n_files)
+        files_to_pos = {k: files_to_pos[k] for k in sampled_keys}
 
     n_matches = 0
-    reps_to_instances = RepsToInstances()
+    lemmatized_vocab_path = os.path.join(data_dir, LEMMATIZED_VOCAB_FILE) if should_lemmatize else None
+    rep_instances = RepInstances(lemmatized_vocab_path)
 
-    for file, token_idx_in_row in bar(files_with_pos):
+    replacements_dir = os.path.join(data_dir, REPS_DIR)
+    for file, token_positions in bar(files_to_pos.items()):
         data = np.load(os.path.join(replacements_dir, f"{file}.npz"))
 
         tokens = data['tokens']
         lengths = data['sent_lengths']
         reps = data['replacements']
+        probs = data['probs']
         doc_ids = data['doc_ids']
 
-        sent_and_positions = list(find_sent_and_positions(token_idx_in_row, tokens, lengths, doc_ids))
+        sent_and_positions = list(find_sent_and_positions(token_positions, tokens, lengths, doc_ids))
 
-        reps_to_instances.populate(sent_and_positions, reps, full_stop_index)
+        rep_instances.populate(sent_and_positions, reps, probs, full_stop_index)
 
-        n_matches += len(token_idx_in_row)
+        n_matches += len(token_positions)
 
-    msg = f"Found Total of {n_matches} Matches in {len(files_with_pos)} Files."
-    return reps_to_instances, msg
+    msg = f"Found Total of {n_matches} Matches in {len(files_to_pos)} Files."
+    return rep_instances, msg
 
-def find_sent_and_positions(token_idx_in_row, tokens, lengths, doc_ids):
-    token_idx_in_row = np.array(token_idx_in_row)
+def find_sent_and_positions(token_positions, tokens, lengths, doc_ids):
+    token_positions = np.array(token_positions)
     length_sum = 0
     for length, doc_id in zip(lengths, doc_ids):
-        token_location = token_idx_in_row[np.where(np.logical_and(token_idx_in_row >= length_sum, token_idx_in_row < length_sum + length))[0]]
-        if len(token_location) > 0:
-            yield tokens[length_sum:length_sum + length], token_location-length_sum, token_location, doc_id
+        token_pos = token_positions[np.where(np.logical_and(token_positions >= length_sum, token_positions < length_sum + length))[0]]
+        if len(token_pos) > 0:
+            yield tokens[length_sum:length_sum + length], token_pos-length_sum, token_pos, doc_id
         length_sum += length
 
 def read_inverted_index(inverted_index, token):
@@ -132,7 +168,7 @@ def read_inverted_index(inverted_index, token):
     with open(inverted_index_file, 'r') as f:
         for line in f:
             index.update(json.loads(line))
-    return [[k, v] for k, v in index.items()] #TODO keep in dictionary form
+    return index
 
 def prepare_arguments():
     parser = argparse.ArgumentParser()
