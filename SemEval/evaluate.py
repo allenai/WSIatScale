@@ -1,20 +1,20 @@
 import argparse
-from collections import defaultdict
 import json
 import logging
-import os
 import math
-import tempfile
-from typing import Dict, Tuple
+import os
 import subprocess
-import numpy as np
-from xml.etree import ElementTree
-from transformers import AutoTokenizer
-from tqdm import tqdm
+import tempfile
+from collections import defaultdict
+from typing import Dict, Tuple
 
-from WSIatScale.analyze import read_files, REPS_DIR, INVERTED_INDEX_DIR
-from WSIatScale.community_detection import CommunityFinder
+import numpy as np
+from tqdm import tqdm
+from transformers import AutoTokenizer
+from WSIatScale.analyze import read_files
 from WSIatScale.clustering import MyBOWHierarchicalLinkage
+from WSIatScale.community_detection import CommunityFinder
+
 
 def main(args):
     evaluate_2010(args)
@@ -39,9 +39,7 @@ def evaluate_labeling_2010(dir_path, labeling: Dict[str, Dict[str, int]], key_pa
 
     with tempfile.NamedTemporaryFile('wt') as fout:
         lines = []
-        for instance_id, clusters_dict in labeling.items():
-            clusters = sorted(clusters_dict.items(), key=lambda x: x[1])
-            clusters_str = f'{clusters[-1][0]}'  # top sense
+        for instance_id, clusters_str in labeling.items():
             lemma_pos = instance_id.rsplit('.', 1)[0]
             lines.append('%s %s %s' % (lemma_pos, instance_id, clusters_str))
         fout.write('\n'.join(lines))
@@ -77,17 +75,18 @@ def get_2010_scores(dir_path, unsup_key, eval_key):
     return ret
 
 def label_2010(args):
+    if args.labeling_function == 'clustering':
+        labeling_function = bow_hierarchical_linkage_labelling
+    else:
+        labeling_function = community_detection_labelling
     instance_id_to_doc_id = json.load(open(os.path.join(args.data_dir2010, "instance_id_to_doc_id.json"), 'r'))
-    lemmas = set([k.split('.')[0] for k in instance_id_to_doc_id.keys()])
+    lemmas = sorted(set([k.split('.')[0] for k in instance_id_to_doc_id.keys()]))
 
-    # community_detection_labelling
-    return bow_hierarchical_linkage_labelling(args.model_hg_path,
+    return labeling_function(args,
         args.data_dir2010,
-        args.n_reps,
         lemmas,
         instance_id_to_doc_id)
 
-#Asaf's Code
 def get_score_by_pos(results):
     res_string = ''
     for pos, pos_title in [('v', 'VERB'), ('n', 'NOUN'), ('j', 'ADJ')]:
@@ -106,32 +105,39 @@ def get_score_by_pos(results):
             res_string += f' AVG: {avg*100:.2f}\n'
     return res_string
 
-def community_detection_labelling(model_hg_path, data_dir, n_reps, lemmas, instance_id_to_doc_id):
-    community_method = 'Louvain'
+def community_detection_labelling(args, data_dir, lemmas, instance_id_to_doc_id):
+    model_hg_path, n_reps = args.model_hg_path, args.n_reps
     doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
 
     tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
 
     labeling = {}
+    # lemmas = ['market']
     for lemma in tqdm(lemmas):
-        all_reps_to_instances, _ = read_files(lemma,
-                                              data_dir,
-                                              sample_n_files=-1,
-                                              full_stop_index=None,
-                                              should_lemmatize=True,
-                                              bar=lambda x: x)
-        reps_to_instances = all_reps_to_instances.populate_specific_size(n_reps)
-        reps_to_instances.remove_query_word(tokenizer, lemma, merge_same_keys=True)
-        community_finder = CommunityFinder(reps_to_instances)
-        communities = community_finder.find(community_method)
-        _, voting_dist = community_finder.voting_distribution(communities, reps_to_instances)
-        for counter, inst, _ in voting_dist:
-            lemma_inst_id = doc_id_to_inst_id[inst.doc_id]
-            labeling[lemma_inst_id] = dict(counter)
+        rep_instances, _ = read_files(lemma,
+                                      data_dir,
+                                      sample_n_files=-1,
+                                      full_stop_index=None,
+                                      should_lemmatize=True,
+                                      bar=lambda x: x)
+        rep_instances.populate_specific_size(n_reps)
+        if args.remove_query_word or args.remove_stop_words:
+            rep_instances.remove_certain_words(args.remove_query_word, args.remove_stop_words, tokenizer, lemma)
+        community_finder = CommunityFinder(rep_instances, args.query_n_reps)
+        communities = community_finder.find()
+
+        _, communities_sents_data = community_finder.argmax_voting(communities, rep_instances)
+        # community_tokens, communities_sents_data = community_finder.merge_small_clusters(community_tokens, communities_sents_data)
+
+        for cluster, rep_instances in enumerate(communities_sents_data):
+            for rep_inst in rep_instances:
+                lemma_inst_id = doc_id_to_inst_id[rep_inst.doc_id]
+                labeling[lemma_inst_id] = cluster
 
     return labeling
 
-def bow_hierarchical_linkage_labelling(model_hg_path, data_dir, n_reps, lemmas, instance_id_to_doc_id):
+def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_doc_id):
+    model_hg_path, n_reps = args.model_hg_path, args.n_reps
     model = MyBOWHierarchicalLinkage()
     doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
 
@@ -139,16 +145,16 @@ def bow_hierarchical_linkage_labelling(model_hg_path, data_dir, n_reps, lemmas, 
 
     labeling = {}
     for lemma in tqdm(lemmas):
-        all_reps_to_instances, _ = read_files(lemma,
+        rep_instances, _ = read_files(lemma,
                                               data_dir,
                                               sample_n_files=-1,
                                               should_lemmatize=True,
                                               full_stop_index=None,
                                               bar=lambda x: x)
-        reps_to_instances = all_reps_to_instances.populate_specific_size(n_reps)
-        reps_to_instances.remove_query_word(tokenizer, lemma, merge_same_keys=True)
-        reps_and_instances = [{'reps': k, 'examples': v} for k, v in sorted(reps_to_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
-        clusters = model.fit_predict(reps_and_instances)
+        rep_instances.populate_specific_size(n_reps)
+        if args.remove_query_word or args.remove_stop_words:
+            rep_instances.remove_certain_words(args.remove_query_word, args.remove_stop_words, tokenizer, lemma)
+        clusters = model.fit_predict(rep_instances)
         for doc_id, cluster in clusters.items():
             lemma_inst_id = doc_id_to_inst_id[doc_id]
             labeling[lemma_inst_id] = {cluster: 1}
@@ -175,6 +181,7 @@ def bow_hierarchical_linkage_labelling(model_hg_path, data_dir, n_reps, lemmas, 
 #         lemmas,
 #         instance_id_to_doc_id)
 
+# from xml.etree import ElementTree
 # def read_semeval_2013(dir_path: str):
 #     logging.info('reading SemEval dataset from %s' % dir_path)
 #     # nlp = spacy.load("en", disable=['ner', 'parser'])
@@ -261,7 +268,11 @@ if __name__ == "__main__":
 
     parser.add_argument("--data_dir2010", type=str)
     parser.add_argument("--data_dir2013", type=str, default='/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2013/bert-large-uncased')
-    parser.add_argument("--n_reps", type=int, default=5)
+    parser.add_argument("--n_reps", type=int, default=20)
+    parser.add_argument("--query_n_reps", type=int, default=10)
     parser.add_argument("--model_hg_path", type=str, default='bert-large-uncased')
+    parser.add_argument("--labeling_function", type=str, choices=['clustering', 'communities'])
+    parser.add_argument("--remove_query_word", action='store_true')
+    parser.add_argument("--remove_stop_words", action='store_true')
     args = parser.parse_args()
     main(args)

@@ -32,3 +32,10 @@ This is accessed from `wsi_at_scale_streamlit.py`
 ## wsi_at_scale_streamlit.py Script
 
 Run by `streamlit run wsi_at_scale_streamlit.py`
+
+# Quick Access For debugging
+```
+from transformers import AutoTokenizer; model_hg_path = 'bert-large-uncased'; tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
+t = ...
+tokenizer.decode([])
+```

@@ -91,34 +91,45 @@ class SemEval2010Processor(DataProcessor):
                 if '.xml' not in file: continue
                 tree = ElementTree.parse(os.path.join(root_dir, file))
                 root = tree.getroot()
+                prev_text = None
+                simliar_prev_texts = 0
                 for child in root:
                     inst_id = child.tag
                     lemma = inst_id.split('.')[0]
                     target_sent = child[0].text
 
                     parsed = nlp(target_sent)
-                    first_occur_idx = None
+                    all_occur_idx = []
                     for idx, w in enumerate(parsed):
                         token_lemma = w.lemma_.lower()
                         if token_lemma == lemma or additional_mapping.get(token_lemma) == lemma:
-                            first_occur_idx = idx
-                            break
-                    if first_occur_idx is None:
+                            all_occur_idx.append(idx)
+                    if len(all_occur_idx) == 0:
                         print(file, [x.lemma_ for x in parsed], target_sent)
                         print('could not find the correct lemma -probably spacy\'s lemmatizer had changed. '
                               'add the lemma from here to additional_mapping:')
                         # e.g. if you see lie.v was broken and in the list of lemmas you find 'lain'
                         # - add a mapping from 'lain' -> 'lie' in additional_mapping map above
                         raise Exception('Could not pin-point lemma in SemEval sentence')
+                    if target_sent != prev_text:
+                        simliar_prev_texts = 0
+                        occur_idx = all_occur_idx[0]
+                    else:
+                        simliar_prev_texts += 1
+                        if simliar_prev_texts >= len(all_occur_idx):
+                            #If couldn't find all occurances
+                            simliar_prev_texts = len(all_occur_idx) - 1
+                        occur_idx = all_occur_idx[simliar_prev_texts]
 
-                    pre = self.format_text(''.join(parsed[i].string for i in range(first_occur_idx)))
-                    target = self.format_target(tokenizer, parsed[first_occur_idx].text, lemma)
-                    post = self.format_text(''.join(parsed[i].string for i in range(first_occur_idx + 1, len(parsed))))
+                    pre = self.format_text(''.join(parsed[i].string for i in range(occur_idx)))
+                    target = self.format_target(tokenizer, parsed[occur_idx].text, lemma)
+                    post = self.format_text(''.join(parsed[i].string for i in range(occur_idx + 1, len(parsed))))
                     
                     target_position = len(tokenizer.encode(pre)) - 1
                     text = f"{pre}{target} {post}"
                     # assert tokenizer.encode(text)[target_position] == tokenizer.encode(target, add_special_tokens=False)[0]
 
+                    prev_text = target_sent
                     yield SemEval2010InputExample(guid=inst_id, text_a=text, local_pos=target_position)
 
     @staticmethod

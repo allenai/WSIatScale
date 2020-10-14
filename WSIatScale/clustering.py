@@ -1,9 +1,10 @@
 # pylint: disable=no-member
-import numpy as np
 from collections import Counter, defaultdict
 
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import pdist, cdist
+
+import numpy as np
 
 from sklearn import cluster as sk_cluster
 from sklearn.feature_extraction import DictVectorizer
@@ -48,37 +49,41 @@ class ClusterFactory():
         if alg_name == 'kmedoids': return MyKMedoids(*args, **kwargs)
         if alg_name == 'agglomerative_clustering': return MyAgglomerativeClustering(*args, **kwargs)
         if alg_name == 'dbscan': return MyDBSCAN(*args, **kwargs)
-        if alg_name == 'bow hierarchical': return MyBOWHierarchicalLinkage(*args, **kwargs)
+        if alg_name == 'bow hierarchical': return MyBOWHierarchicalLinkage()
 
-    def reps_to_their_clusters(self, clusters, sorted_reps_to_instances_data):
-        clustered_reps = {i: [] for i in self.clusters_range(clusters)}
-        for c, rep_with_examples in zip(clusters, sorted_reps_to_instances_data):
-            clustered_reps[c].append(rep_with_examples)
+    def reps_to_their_clusters(self, inst_id_to_cluster, rep_instances):
+        #TODO Something smarter here
+        assert max(inst_id_to_cluster.keys()) - min(inst_id_to_cluster.keys()) + 1 == len(rep_instances.data)
+        clustered_reps = {i: [] for i in self.clusters_range(inst_id_to_cluster)}
+        for (instance_id, cluster_id), rep_inst  in zip(inst_id_to_cluster.items(), rep_instances.data):
+            assert rep_inst.doc_id == instance_id
+            clustered_reps[cluster_id].append(rep_inst)
 
         return clustered_reps
 
     @staticmethod
-    def group_for_display(args, tokenizer, clustered_reps, cluster_sents):
+    def group_for_display(args, tokenizer, clustered_rep_instances, cluster_sents):
         show_top_n_clusters = args.show_top_n_clusters
         show_top_n_words_per_cluster = args.show_top_n_words_per_cluster
-        sorted_zipped = sorted(zip(clustered_reps.values(), cluster_sents), key = lambda x: sum(len(reps['examples']) for reps in x[0]), reverse=True)
+        assert clustered_rep_instances.keys() == cluster_sents.keys()
+        sorted_zipped = sorted(zip(clustered_rep_instances.values(), cluster_sents.values()), key = lambda x: len(x[0]), reverse=True)
 
-        sorted_clustered_reps, sorted_average_sents = zip(*sorted_zipped)
-        top_clustered_reps = sorted_clustered_reps[:show_top_n_clusters]
-        for i, cluster_reps in enumerate(top_clustered_reps):
+        sorted_clustered_rep_instances, sorted_average_sents = zip(*sorted_zipped)
+        top_clustered_rep_instances = sorted_clustered_rep_instances[:show_top_n_clusters]
+        for i, cluster_rep_instances in enumerate(top_clustered_rep_instances):
             words_in_cluster = Counter()
-            for reps in cluster_reps:
-                for rep in reps['reps']:
-                    words_in_cluster[rep] += len(reps['examples'])
+            for rep_instance in cluster_rep_instances:
+                for rep in rep_instance.reps:
+                    words_in_cluster[rep] += 1
             msg = {'header': f"Cluster {i}",
-                   'found': f"Found total {sum(len(reps['examples']) for reps in cluster_reps)} matches"}
+                   'found': f"Found total {len(cluster_rep_instances)} matches"}
             words_in_cluster = words_in_cluster.most_common(show_top_n_words_per_cluster)
             words_in_cluster = [(tokenizer.decode([t]), c) for t, c in words_in_cluster]
 
             yield words_in_cluster, sorted_average_sents[i], msg
 
-        if show_top_n_clusters < len(sorted_clustered_reps):
-            msg = {'header': f"There are additional {len(sorted_clustered_reps) - show_top_n_clusters} that are not displayed.",
+        if show_top_n_clusters < len(sorted_clustered_rep_instances):
+            msg = {'header': f"There are additional {len(sorted_clustered_rep_instances) - show_top_n_clusters} that are not displayed.",
                    'found': ''}
             yield None, None, msg
 
@@ -200,8 +205,8 @@ class MyBOWHierarchicalLinkage(ClusterFactory):
         self.max_number_senses = 7
         self.min_sense_instances = 2
 
-    def fit_predict(self, reps_and_instances):
-        labels, doc_ids, rep_mat = self.get_initial_labels(reps_and_instances)
+    def fit_predict(self, rep_instances):
+        labels, doc_ids, rep_mat = self.get_initial_labels(rep_instances)
         n_senses = np.max(labels) + 1
 
         big_senses, doc_id_to_cluster = self.populate_doc_id_to_clusters(doc_ids, labels)
@@ -213,12 +218,26 @@ class MyBOWHierarchicalLinkage(ClusterFactory):
         senses = self.new_senses_mapping(doc_id_to_cluster, sense_remapping)
         return senses
 
-    def get_initial_labels(self, reps_and_instances):
-        reps_and_sent_data = [(reps_and_sents_data['reps'], sent_data) for reps_and_sents_data in reps_and_instances for sent_data in reps_and_sents_data['examples']]
-        reps = [{r:1 for r in reps} for reps, _ in reps_and_sent_data]
-        doc_ids = [sent_data.doc_id for _, sent_data in reps_and_sent_data]
+    def clusters_range(self, clusters):
+        return range(0, max(clusters.values())+1)
+
+    def representative_sents(self, clustered_reps, n_sents_to_print):
+        # TODO Return better representative
+        out = {}
+        for k, rep_instances in clustered_reps.items():
+            if n_sents_to_print > 0:
+                out[k] = rep_instances[:n_sents_to_print]
+            else:
+                out[k] = rep_instances
+
+        return out
+
+    def get_initial_labels(self, rep_instances):
+        #TODO can I do this without creating a dict?
+        reps_dict = [{r: 1 for r, p in zip(rep_instance.reps, rep_instance.probs)} for rep_instance in rep_instances.data]
+        doc_ids = [rep_instance.doc_id for rep_instance in rep_instances.data]
         dict_vectorizer = DictVectorizer(sparse=False)
-        rep_mat = dict_vectorizer.fit_transform(reps)
+        rep_mat = dict_vectorizer.fit_transform(reps_dict)
         if self.use_tfidf:
             rep_mat = TfidfTransformer(norm=None).fit_transform(rep_mat).todense()
 

@@ -14,7 +14,7 @@ from transformers import AutoTokenizer, BertForMaskedLM, RobertaForMaskedLM
 from adaptive_sampler import MaxTokensBatchSampler, data_collator_for_adaptive_sampler
 from data_processors import CORDDataset, WikiDataset, SemEval2010Dataset, SemEval2013Dataset # pylint: disable=import-error
 
-from analyze import REPS_DIR
+REPS_DIR = 'replacements'
 
 TOP_N_WORDS = 100 + 1 #removing identity replacement
 PAD_ID = 0
