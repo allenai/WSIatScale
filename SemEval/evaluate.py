@@ -106,10 +106,10 @@ def get_score_by_pos(results):
     return res_string
 
 def community_detection_labelling(args, data_dir, lemmas, instance_id_to_doc_id):
-    model_hg_path, n_reps = args.model_hg_path, args.n_reps
+    model_hf_path, n_reps = args.model_hf_path, args.n_reps
     doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
 
-    tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
 
     labeling = {}
     # lemmas = ['market']
@@ -137,11 +137,11 @@ def community_detection_labelling(args, data_dir, lemmas, instance_id_to_doc_id)
     return labeling
 
 def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_doc_id):
-    model_hg_path, n_reps = args.model_hg_path, args.n_reps
+    model_hf_path, n_reps = args.model_hf_path, args.n_reps
     model = MyBOWHierarchicalLinkage()
     doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
 
-    tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
 
     labeling = {}
     for lemma in tqdm(lemmas):
@@ -175,7 +175,7 @@ def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_do
 # def label_2013(args):
 #     instance_id_to_doc_id = json.load(open(os.path.join(args.data_dir2010, "instance_id_to_doc_id.json"), 'r'))
 #     lemmas = set([k.split('.')[0] for k in instance_id_to_doc_id.keys()])
-#     return community_detection_labelling(args.model_hg_path,
+#     return community_detection_labelling(args.model_hf_path,
 #         args.data_dir2013,
 #         args.n_reps,
 #         lemmas,
@@ -270,7 +270,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir2013", type=str, default='/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2013/bert-large-uncased')
     parser.add_argument("--n_reps", type=int, default=20)
     parser.add_argument("--query_n_reps", type=int, default=10)
-    parser.add_argument("--model_hg_path", type=str, default='bert-large-uncased')
+    parser.add_argument("--model_hf_path", type=str, default='bert-large-uncased')
     parser.add_argument("--labeling_function", type=str, choices=['clustering', 'communities'])
     parser.add_argument("--remove_query_word", action='store_true')
     parser.add_argument("--remove_stop_words", action='store_true')

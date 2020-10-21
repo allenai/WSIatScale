@@ -30,12 +30,13 @@ class RepInstances:
         if self.lemmatized_vocab_path:
             self.lemmatized_vocab = {int(k): v for k, v in json.load(open(self.lemmatized_vocab_path, 'r')).items()}
 
-    def populate(self, sent_and_positions, reps, probs, full_stop_index):
-        for sent, token_pos_in_sent, global_token_pos, doc_id in sent_and_positions:
-            for local_pos, global_pos in zip(token_pos_in_sent, global_token_pos):
-                single_sent = self.find_single_sent_around_token(sent, local_pos, full_stop_index)
-                curr_reps = reps[global_pos]
-                curr_probs = probs[global_pos]
+    def populate(self, paragraph_and_positions, reps, probs, full_stop_index, instance_attributes):
+        for paragraph, token_pos_in_paragraph, global_token_pos, doc_id in paragraph_and_positions:
+            for local_pos, global_pos in zip(token_pos_in_paragraph, global_token_pos):
+                single_sent, _ = self.find_single_sent_around_token(paragraph, local_pos, full_stop_index) \
+                    if 'sent' in instance_attributes else (None, None)
+                curr_reps = np.array(reps[global_pos]) if 'reps' in instance_attributes else None
+                curr_probs = np.array(probs[global_pos]) if 'probs' in instance_attributes else None
                 if self.lemmatized_vocab_path:
                     curr_reps, curr_probs = self.lemmatize_reps_and_probs(curr_reps, curr_probs)
                 self.data.append(Instance(doc_id=doc_id,
@@ -63,10 +64,11 @@ class RepInstances:
 
         for instance in self.data:
             instance.reps = instance.reps[:n_reps]
-            instance.probs = instance.probs[:n_reps]
-            instance.probs /= instance.probs.sum()
+            if instance.probs is not None:
+                instance.probs = instance.probs[:n_reps]
+                instance.probs /= instance.probs.sum()
 
-    def remove_certain_words(self, remove_query_word, remove_stop_words, tokenizer, word):
+    def remove_certain_words(self, tokenizer, word, remove_query_word, half_words_list=None):
         words_to_remove = []
         if remove_query_word:
             words_to_remove += [word.lower().lstrip(), f" {word.lower().lstrip()}", word.lower().title().lstrip(), f" {word.title().lstrip()}"]
@@ -75,37 +77,44 @@ class RepInstances:
             t = tokenizer.encode(w, add_special_tokens=False)
             if len(t) == 1:
                 tokens_to_remove.append(t[0])
-        if remove_stop_words:
-            tokens_to_remove += [2022, 1997, 2012, 2011, 1999, 1012, 1024, 1010, 1998, 1996, 2007, 1037, 2049, 1013, 2025, 1011, 1000]
-                              # ['be', 'of', 'at', 'by', 'in', '.', ':', ',', 'and', 'the', 'with', 'a', 'its', '/', 'not', '-', '"']
 
-        for instance in self.data:
-            if not all([tokenizer.decode([r]).startswith('#') for r in instance.reps]):
-                new_reps, new_probs = zip(*[(r, p) for r, p in zip(instance.reps, instance.probs) if not tokenizer.decode([r]).startswith('#')])
-            if not all([r in tokens_to_remove for r in new_reps]):
-                new_reps, new_probs = zip(*[(r, p) for r, p in zip(new_reps, new_probs) if r not in tokens_to_remove])
-            if len(new_reps) != len(instance.reps):
-                instance.reps = new_reps
-                instance.probs = np.array(new_probs)
-                instance.probs /= instance.probs.sum()
+        if len(tokens_to_remove) > 0:
+            for instance in self.data:
+                new_reps, new_probs = instance.reps, instance.probs
+                if half_words_list is not None:
+                    if new_probs is None:
+                        new_reps = [r for r in new_reps if r not in half_words_list]
+                    else:
+                        new_reps, new_probs = zip(*[(r, p) for r, p in zip(new_reps, new_probs) if r not in half_words_list])
+                if not all([r in tokens_to_remove for r in new_reps]):
+                    if new_probs is None:
+                        new_reps = [r for r in new_reps if r not in tokens_to_remove]
+                    else:
+                        new_reps, new_probs = zip(*[(r, p) for r, p in zip(new_reps, new_probs) if r not in tokens_to_remove])
+                if len(new_reps) > 0 and len(new_reps) != len(instance.reps):
+                    instance.reps = new_reps
+                    if instance.probs is not None:
+                        instance.probs = np.array(new_probs)
+                        instance.probs /= instance.probs.sum()
 
     @staticmethod
     def find_single_sent_around_token(concated_sents, local_pos, full_stop_index):
-        if full_stop_index == None:
-            return concated_sents
+        if full_stop_index is None:
+            return concated_sents, local_pos
 
         full_stops_indices = np.where(concated_sents == full_stop_index)[0]
         if len(full_stops_indices) == 0:
-            return concated_sents
-        end_index = full_stops_indices.searchsorted(local_pos)
-        start = full_stops_indices[end_index-1]+1 if end_index != 0 else 0
-        if end_index == len(full_stops_indices):
-            return concated_sents[start:]
-        end = full_stops_indices[end_index]+1
+            return concated_sents, local_pos
+        sent_idx_to_ret = full_stops_indices.searchsorted(local_pos)
+        start = full_stops_indices[sent_idx_to_ret-1]+1 if sent_idx_to_ret != 0 else 0
+        if sent_idx_to_ret == len(full_stops_indices):
+            return concated_sents[start:], local_pos-start
+        end = full_stops_indices[sent_idx_to_ret]+1
         out = concated_sents[start:end]
+        # TODO
         out = out[out!=0]
         out = out[out!=2]
-        return out
+        return out, local_pos-start
 
     def merge(self, other):
         for key, sents in other.data.items():
@@ -121,37 +130,40 @@ def tokenize(tokenizer, word):
     token = token[0]
     return token
 
-def read_files(token, data_dir, sample_n_files, full_stop_index, should_lemmatize=False, bar=tqdm):
-    files_to_pos = read_inverted_index(os.path.join(data_dir, INVERTED_INDEX_DIR), token)
-    if sample_n_files > 0 and len(files_to_pos) > sample_n_files:
-        random.seed(SEED)
-        sampled_keys = random.sample(files_to_pos.keys(), sample_n_files)
-        files_to_pos = {k: files_to_pos[k] for k in sampled_keys}
+def read_files(token,
+               data_dir,
+               sample_n_instances,
+               full_stop_index,
+               should_lemmatize=False,
+               instance_attributes=['doc_id', 'reps', 'probs', 'sent'],
+               inverted_index_dir=INVERTED_INDEX_DIR,
+               bar=tqdm):
+    files_to_pos = read_inverted_index(os.path.join(data_dir, inverted_index_dir), token, sample_n_instances)
 
     n_matches = 0
     lemmatized_vocab_path = os.path.join(data_dir, LEMMATIZED_VOCAB_FILE) if should_lemmatize else None
     rep_instances = RepInstances(lemmatized_vocab_path)
 
-    replacements_dir = os.path.join(data_dir, REPS_DIR)
     for file, token_positions in bar(files_to_pos.items()):
-        data = np.load(os.path.join(replacements_dir, f"{file}.npz"))
+        tokens = np.load(npy_file_path(data_dir, file, 'tokens'), mmap_mode='r')
+        lengths = np.load(npy_file_path(data_dir, file, 'lengths'), mmap_mode='r')
+        reps = np.load(npy_file_path(data_dir, file, 'reps'), mmap_mode='r')
+        probs = np.load(npy_file_path(data_dir, file, 'probs'), mmap_mode='r') if 'probs' in instance_attributes else None
+        doc_ids = np.load(npy_file_path(data_dir, file, 'doc_ids'), mmap_mode='r')
 
-        tokens = data['tokens']
-        lengths = data['sent_lengths']
-        reps = data['replacements']
-        probs = data['probs']
-        doc_ids = data['doc_ids']
+        paragraph_and_positions = list(find_paragraph_and_positions(token_positions, tokens, lengths, doc_ids))
 
-        sent_and_positions = list(find_sent_and_positions(token_positions, tokens, lengths, doc_ids))
-
-        rep_instances.populate(sent_and_positions, reps, probs, full_stop_index)
+        rep_instances.populate(paragraph_and_positions, reps, probs, full_stop_index, instance_attributes)
 
         n_matches += len(token_positions)
 
     msg = f"Found Total of {n_matches} Matches in {len(files_to_pos)} Files."
     return rep_instances, msg
 
-def find_sent_and_positions(token_positions, tokens, lengths, doc_ids):
+def npy_file_path(data_dir, f, a):
+    return os.path.join(os.path.join(data_dir, REPS_DIR), f"{f}-{a}.npy")
+
+def find_paragraph_and_positions(token_positions, tokens, lengths, doc_ids):
     token_positions = np.array(token_positions)
     length_sum = 0
     for length, doc_id in zip(lengths, doc_ids):
@@ -160,15 +172,27 @@ def find_sent_and_positions(token_positions, tokens, lengths, doc_ids):
             yield tokens[length_sum:length_sum + length], token_pos-length_sum, token_pos, doc_id
         length_sum += length
 
-def read_inverted_index(inverted_index, token):
+def read_inverted_index(inverted_index, token, sample_n_instances):
     inverted_index_file = os.path.join(inverted_index, f"{token}.jsonl")
     if not os.path.exists(inverted_index_file):
-        raise ValueError('token is not in inverted index')
+        raise ValueError(f'token {token} is not in inverted index')
     index = {}
     with open(inverted_index_file, 'r') as f:
         for line in f:
             index.update(json.loads(line))
+
+    index = sample_instances(index, sample_n_instances)
     return index
+
+def sample_instances(index, sample_n_instances):
+    random.seed(SEED)
+
+    ret = {}
+    sample_n_instances = min(sample_n_instances, len(index))
+    if sample_n_instances > 0:
+        files = random.sample(list(index.keys()), sample_n_instances)
+        ret = {file: [index[file][0]] for file in files}
+    return ret
 
 def prepare_arguments():
     parser = argparse.ArgumentParser()
@@ -177,7 +201,7 @@ def prepare_arguments():
     parser.add_argument("--word", type=str, default='race')
     parser.add_argument("--inverted_index", type=str, default='/home/matane/matan/dev/datasets/processed_for_WSI/CORD-19/inverted_index.json')
     parser.add_argument("--n_reps", type=int, default=5)
-    parser.add_argument("--sample_n_files", type=int, default=1000)
+    parser.add_argument("--sample_n_instances", type=int, default=1000)
     parser.add_argument("--n_bow_reps_to_report", type=int, default=10, help="How many different replacements to report")
     parser.add_argument("--n_sents_to_print", type=int, default=2, help="Num sents to print")
     parser.add_argument("--show_top_n_clusters", type=int, default=20)

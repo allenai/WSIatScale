@@ -33,8 +33,27 @@ This is accessed from `app.py`
 
 Run by `streamlit run app.py`
 
+## at_scale_app.py
+
+We first want to index all words in the LM vocab with something like this:
+
+```
+python WSIatScale/create_inverted_index.py --replacements_dir .../replacements/ --outdir .../inverted_index --dataset Wikipedia-BERT > indexing.log 2>&1 &
+```
+
+Then we want to precompute clusters for all words:
+```
+python -m WSIatScale.cluster_reps_per_token --data_dir .../bert/ --dataset Wikipedia-BERT
+```
+
+And finally we want to find all instances of words by cluster:
+```
+...
+```
+
+
+
 # Quick Access For debugging
 ```
-from transformers import AutoTokenizer; model_hg_path = 'bert-large-uncased'; tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
-t = ...
-tokenizer.decode([])
+from transformers import AutoTokenizer; model_hg_path = 'bert-large-cased-whole-word-masking'; tok = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
+tok.decode([])

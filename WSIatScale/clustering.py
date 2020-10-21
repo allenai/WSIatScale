@@ -87,7 +87,7 @@ class MyBOWHierarchicalLinkage(ClusterFactory):
 
     def get_initial_labels(self, rep_instances):
         #TODO can I do this without creating a dict?
-        reps_dict = [{r: 1 for r, p in zip(rep_instance.reps, rep_instance.probs)} for rep_instance in rep_instances.data]
+        reps_dict = [{r: 1 for r in rep_instance.reps} for rep_instance in rep_instances.data]
         doc_ids = [rep_instance.doc_id for rep_instance in rep_instances.data]
         dict_vectorizer = DictVectorizer(sparse=False)
         rep_mat = dict_vectorizer.fit_transform(reps_dict)
@@ -96,7 +96,8 @@ class MyBOWHierarchicalLinkage(ClusterFactory):
 
         condensed_distance_mat = pdist(rep_mat, metric=self.metric)
         hierarchical_linkage = linkage(condensed_distance_mat, method=self.method, metric=self.metric)
-        distance_threshold = hierarchical_linkage[-self.max_number_senses, 2]
+        max_number_senses = min(self.max_number_senses, len(rep_instances.data) - 1)
+        distance_threshold = hierarchical_linkage[-max_number_senses, 2]
         labels = fcluster(hierarchical_linkage, distance_threshold, 'distance') - 1
         return labels, doc_ids, rep_mat
 

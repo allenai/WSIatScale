@@ -67,7 +67,7 @@ class CommunityFinder:
         return community_tokens, communities_sents_data #TODO Why do I need to return community tokens?
 
     def voting_distribution(self, communities, rep_instances):
-        community_tokens = [[self.node2token[c] for c in comm] for comm in communities]
+        community_tokens = [[self.node2token[n] for n in comm] for comm in communities]
         token_to_comm = {t: i for i, c in enumerate(community_tokens) for t in c}
         voting_dist = []
 

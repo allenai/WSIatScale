@@ -124,7 +124,7 @@ def write_data_to_jsonl(out_path, tokenizer, data):
 
 def main(args):
     data = read_data_files(args.data_dir)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_hg_path, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_hf_path, use_fast=True)
     write_data_to_jsonl(args.out_file, tokenizer, data)
     print("Done")
 
@@ -133,6 +133,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--out_file", type=str, required=True)
-    parser.add_argument("--model_hg_path", type=str, choices=['allenai/scibert_scivocab_uncased', 'roberta-large'])
+    parser.add_argument("--model_hf_path", type=str, choices=['allenai/scibert_scivocab_uncased', 'roberta-large'])
     args = parser.parse_args()
     main(args)

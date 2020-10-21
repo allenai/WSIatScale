@@ -22,10 +22,10 @@ dataset_params = {'cord': {'dataset_class': CORDDataset},
                   'wiki': {'dataset_class': WikiDataset},
                   'SemEval2010': {'dataset_class': SemEval2010Dataset},
                   'SemEval2013': {'dataset_class': SemEval2013Dataset}}
-model_params = {'bert-large-cased-whole-word-masking': {'model_class': BertForMaskedLM, 'model_hg_path': 'bert-large-cased-whole-word-masking'},
-    'bert-large-uncased' : {'model_class': BertForMaskedLM, 'model_hg_path': 'bert-large-uncased'},
-    'RoBERTa': {'model_class': RobertaForMaskedLM, 'model_hg_path': 'roberta-large'},
-    'scibert': {'model_class': BertForMaskedLM, 'model_hg_path': 'allenai/scibert_scivocab_uncased'}}
+model_params = {'bert-large-cased-whole-word-masking': {'model_class': BertForMaskedLM, 'model_hf_path': 'bert-large-cased-whole-word-masking'},
+    'bert-large-uncased' : {'model_class': BertForMaskedLM, 'model_hf_path': 'bert-large-uncased'},
+    'RoBERTa': {'model_class': RobertaForMaskedLM, 'model_hf_path': 'roberta-large'},
+    'scibert': {'model_class': BertForMaskedLM, 'model_hf_path': 'allenai/scibert_scivocab_uncased'}}
 
 def main(args):
     device = torch.device("cuda:0" if torch.cuda.is_available() and not args.cpu else "cpu")
@@ -67,10 +67,10 @@ def read_files_with_conditions(args):
 
 
 def initialize_models(device, args):
-    model_hg_path = model_params[args.model]['model_hg_path']
+    model_hf_path = model_params[args.model]['model_hf_path']
     model_class = model_params[args.model]['model_class']
-    tokenizer = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
-    model = model_class.from_pretrained(model_hg_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
+    model = model_class.from_pretrained(model_hf_path)
     model.to(device)
     if args.fp16:
         from apex import amp # pylint: disable=import-error
