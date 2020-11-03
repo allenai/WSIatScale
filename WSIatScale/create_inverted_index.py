@@ -1,3 +1,4 @@
+# pylint: disable=import-error
 import argparse
 import json
 import os
@@ -7,9 +8,7 @@ from tqdm import tqdm
 
 from transformers import AutoTokenizer
 
-tokenizer_params = {'CORD-19': 'allenai/scibert_scivocab_uncased',
-                    'Wikipedia-roberta': 'roberta-large',
-                    'Wikipedia-BERT': 'bert-large-cased-whole-word-masking',}
+from utils.utils import tokenizer_params
 
 def main(replacements_dir, outdir, dataset):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_params[dataset], use_fast=True)
@@ -34,7 +33,7 @@ def index(tokenizer, tokens_to_index, replacements_dir, outdir, dataset, bar=tqd
     if which_files:
         all_files = all_files[which_files[0]:which_files[1]] # Keeping the dict in memory is too expensive.
     for filename in tqdm(all_files):
-        try: #TODO: getting BadZipFile
+        try: #getting BadZipFile
             npzfile = np.load(os.path.join(replacements_dir, filename))
             file_tokens = npzfile['tokens']
             file_id = filename.split('.')[0]
@@ -64,7 +63,9 @@ def index(tokenizer, tokens_to_index, replacements_dir, outdir, dataset, bar=tqd
 def full_words_tokens(dataset, tokenizer):
     if dataset == 'Wikipedia-BERT':
         vocab = tokenizer.get_vocab()
-        return set([token for word, token in vocab.items() if valid_word(token, word)])
+        ret = set([token for word, token in vocab.items() if valid_word(token, word)])
+        ret -= set([22755, 1232, 23567, 20262]) #Do not appear in Wikipedia.
+        return ret
     elif dataset == 'allenai/scibert_scivocab_uncased':
         raise NotImplementedError
     elif dataset == 'Wikipedia-RoBERTa':

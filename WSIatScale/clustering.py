@@ -16,10 +16,9 @@ class ClusterFactory():
         if alg_name == 'bow hierarchical': return MyBOWHierarchicalLinkage()
 
     def reps_to_their_clusters(self, inst_id_to_cluster, rep_instances):
-        clustered_reps = {i: [] for i in self.clusters_range(inst_id_to_cluster)}
-        for rep_inst in rep_instances.data:
-            cluster_id = inst_id_to_cluster[rep_inst.doc_id]
-            clustered_reps[cluster_id].append(rep_inst)
+        clustered_reps = {i: [] for i in range(max(inst_id_to_cluster)+1)}
+        for cluster_idx, rep_inst in zip(inst_id_to_cluster, rep_instances.data):
+            clustered_reps[cluster_idx].append(rep_inst)
 
         return clustered_reps
 
@@ -59,17 +58,15 @@ class MyBOWHierarchicalLinkage(ClusterFactory):
         self.min_sense_instances = 2
 
     def fit_predict(self, rep_instances):
-        labels, doc_ids, rep_mat = self.get_initial_labels(rep_instances)
+        labels, rep_mat = self.get_initial_labels(rep_instances)
         n_senses = np.max(labels) + 1
-
-        big_senses, doc_id_to_cluster = self.populate_doc_id_to_clusters(doc_ids, labels)
-
         sense_means = self.find_sense_means(n_senses, rep_mat, labels)
 
-        sense_remapping, labels = self.merge_small_senses(sense_means, n_senses, big_senses, labels)
+        big_senses = self.find_big_senses(labels)
 
-        senses = self.new_senses_mapping(doc_id_to_cluster, sense_remapping)
-        return senses
+        labels = self.merge_small_senses(sense_means, n_senses, big_senses, labels)
+
+        return labels
 
     def clusters_range(self, clusters):
         return range(0, max(clusters.values())+1)
@@ -88,7 +85,6 @@ class MyBOWHierarchicalLinkage(ClusterFactory):
     def get_initial_labels(self, rep_instances):
         #TODO can I do this without creating a dict?
         reps_dict = [{r: 1 for r in rep_instance.reps} for rep_instance in rep_instances.data]
-        doc_ids = [rep_instance.doc_id for rep_instance in rep_instances.data]
         dict_vectorizer = DictVectorizer(sparse=False)
         rep_mat = dict_vectorizer.fit_transform(reps_dict)
         if self.use_tfidf:
@@ -99,44 +95,32 @@ class MyBOWHierarchicalLinkage(ClusterFactory):
         max_number_senses = min(self.max_number_senses, len(rep_instances.data) - 1)
         distance_threshold = hierarchical_linkage[-max_number_senses, 2]
         labels = fcluster(hierarchical_linkage, distance_threshold, 'distance') - 1
-        return labels, doc_ids, rep_mat
+        return labels, rep_mat
 
     def merge_small_senses(self, sense_means, n_senses, big_senses, labels):
-        if self.min_sense_instances > 0:
-            sense_remapping = {}
-            distance_mat = cdist(sense_means, sense_means, metric='cosine')
-            closest_senses = np.argsort(distance_mat, )[:, ]
+        if self.min_sense_instances <= 0:
+            return {x:x for x in range(n_senses)}, labels
+        
+        sense_remapping = {}
+        distance_mat = cdist(sense_means, sense_means, metric='cosine')
+        closest_senses = np.argsort(distance_mat, )[:, ]
 
-            for sense_idx in range(n_senses):
-                for closest_sense in closest_senses[sense_idx]:
-                    if closest_sense in big_senses:
-                        sense_remapping[sense_idx] = closest_sense
-                        break
-            new_order_of_senses = list(set(sense_remapping.values()))
-            sense_remapping = dict((k, new_order_of_senses.index(v)) for k, v in sense_remapping.items())
+        for sense_idx in range(n_senses):
+            for closest_sense in closest_senses[sense_idx]:
+                if closest_sense in big_senses:
+                    sense_remapping[sense_idx] = closest_sense
+                    break
 
-            labels = np.array([sense_remapping[x] for x in labels])
-        return sense_remapping, labels
+        continuous_mapping = {original_sense_idx: new_sense_idx for original_sense_idx, new_sense_idx in zip(sorted(big_senses), range(len(big_senses)))}
+        labels = np.array([continuous_mapping[sense_remapping[x]] for x in labels])
 
-    def populate_doc_id_to_clusters(self, doc_ids, labels):
-        senses_n_domminates = defaultdict(int)
-        doc_id_to_cluster = {}
-        for i, doc_id in enumerate(doc_ids):
-            doc_id_clusters = labels[i]
-            doc_id_to_cluster[doc_id] = doc_id_clusters
-            senses_n_domminates[doc_id_clusters] += 1
+        return labels
 
-        big_senses = [x for x in senses_n_domminates if senses_n_domminates[x] >= self.min_sense_instances]
-        return big_senses, doc_id_to_cluster
+    def find_big_senses(self, labels):
+        sense_counter = Counter(labels)
 
-    @staticmethod
-    def new_senses_mapping(doc_id_to_cluster, sense_remapping):
-        senses = {}
-        for doc_id, sense_idx in doc_id_to_cluster.items():
-            if sense_remapping:
-                sense_idx = sense_remapping[sense_idx]
-            senses[doc_id] = sense_idx
-        return senses
+        big_senses = [x for x in sense_counter if sense_counter[x] >= self.min_sense_instances]
+        return big_senses
 
     @staticmethod
     def find_sense_means(n_senses, transformed, labels):

@@ -11,51 +11,47 @@ import numpy as np
 from tqdm import tqdm
 
 from WSIatScale.analyze import read_files
-from WSIatScale.create_inverted_index import tokenizer_params, full_words_tokens
+from WSIatScale.create_inverted_index import full_words_tokens
+from utils.utils import tokenizer_params
 
 from WSIatScale.clustering import MyBOWHierarchicalLinkage
 from WSIatScale.community_detection import CommunityFinder
+from utils.utils import SpecialTokens
 
 from transformers import AutoTokenizer
 
-FULL_STOP_INDEX = 119
 SAMPLE_N_INSTANCES = 1000
 MOST_COMMON_CLUSTER_REPS = 100
-OUT_FOLDER = 'word_clusters_lemmatized'
+WORD_CLUSTERS_DIR = 'word_clusters'
 
 def main(args):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_params[args.dataset], use_fast=True)
     tokens_to_index = full_words_tokens(args.dataset, tokenizer)
-    half_words_list = np.load(f"non-full-words/non-full-words-{args.model_hf_path}.npy")
-    partial_write_communities_to_disk = partial(write_communities_to_disk, tokenizer=tokenizer, half_words_list=half_words_list)
+    already_done = set([int(f.split('_')[0]) for f in os.listdir(out_dir)])
+    tokens_to_index -= already_done
+    partial_write_communities_to_disk = partial(write_communities_to_disk, tokenizer=tokenizer, model_hf_path=args.model_hf_path)
     with Pool(cpu_count()) as p:
         list(tqdm(p.imap(partial_write_communities_to_disk, tokens_to_index), total=len(tokens_to_index)))
 
-def write_communities_to_disk(token, tokenizer, half_words_list):
-    try:
-        rep_instances, _ = read_files(token, args.data_dir,
-            SAMPLE_N_INSTANCES,
-            FULL_STOP_INDEX,
-            should_lemmatize=True,
-            instance_attributes=['doc_id', 'reps'],
-            bar=lambda x: x,
-        )
-        #TODO lemmatize
-        rep_instances.remove_certain_words(tokenizer=tokenizer,
-                                            word=tokenizer.decode([token]),
-                                            remove_query_word=True,
-                                            half_words_list=half_words_list)
-        clustering_data_by_n_reps = {'agglomerative_clustering': {}, 'community_detection': {}}
-        for n_reps in [5, 20, 50]:
-            curr_rep_instances = deepcopy(rep_instances)
-            curr_rep_instances.populate_specific_size(n_reps)
+def write_communities_to_disk(token, tokenizer, model_hf_path):
+    rep_instances, _ = read_files(token, args.data_dir,
+        SAMPLE_N_INSTANCES,
+        SpecialTokens(model_hf_path),
+        should_lemmatize=True,
+        instance_attributes=['doc_id', 'reps'],
+        bar=lambda x: x,
+    )
 
-            clustering_data_by_n_reps['agglomerative_clustering'][n_reps] = agglomerative_clustering(curr_rep_instances)
-            clustering_data_by_n_reps['community_detection'][n_reps] = community_detection_clustering(curr_rep_instances)
-        json.dump(clustering_data_by_n_reps, open(os.path.join(args.out_dir, f"{token}_clustering.json"), 'w'))
-    except ValueError as e:
-        print(e) # if token is in vocab but not in database.
-        pass
+    clustering_data_by_n_reps = {'agglomerative_clustering': {}, 'community_detection': {}}
+    for n_reps in [5, 20, 50]:
+        curr_rep_instances = deepcopy(rep_instances)
+        curr_rep_instances.remove_query_word(tokenizer, token)
+        curr_rep_instances.populate_specific_size(n_reps)
+        curr_rep_instances.remove_empty_replacements()
+
+        clustering_data_by_n_reps['agglomerative_clustering'][n_reps] = agglomerative_clustering(curr_rep_instances)
+        clustering_data_by_n_reps['community_detection'][n_reps] = community_detection_clustering(curr_rep_instances)
+    json.dump(clustering_data_by_n_reps, open(os.path.join(args.out_dir, f"{token}_clustering.json"), 'w'))
 
 def agglomerative_clustering(rep_instances):
     model = MyBOWHierarchicalLinkage()
@@ -66,7 +62,8 @@ def agglomerative_clustering(rep_instances):
         cluster_reps = [inst.reps for inst in intances]
         reps_counter = Counter(int(r) for reps in cluster_reps for r in reps)
         most_common_tokens = reps_counter.most_common(MOST_COMMON_CLUSTER_REPS)
-        clustering_data.append(most_common_tokens)
+        if community_big_enough_heuristics(most_common_tokens):
+            clustering_data.append(most_common_tokens)
 
     return clustering_data
 
@@ -79,9 +76,15 @@ def community_detection_clustering(rep_instances, query_n_reps=10):
     community_tokens = sort_community_tokens_by_popularity(rep_instances, community_tokens)
     clustering_data = []
     for com_tokens, _ in zip(community_tokens, communities_sents_data):
-        clustering_data.append([(int(t), v) for t, v in com_tokens[:MOST_COMMON_CLUSTER_REPS]])
-
+        most_common_tokens = [(int(t), v) for t, v in com_tokens[:MOST_COMMON_CLUSTER_REPS]]
+        if community_big_enough_heuristics(most_common_tokens):
+            clustering_data.append(most_common_tokens)
+        
     return clustering_data
+
+def community_big_enough_heuristics(most_common_tokens):
+    minimum_second_word_instances = 10
+    return len(most_common_tokens) > 1 and most_common_tokens[1][1] > minimum_second_word_instances
 
 def sort_community_tokens_by_popularity(rep_instances, community_tokens):
     ret = []
@@ -97,7 +100,7 @@ def sort_community_tokens_by_popularity(rep_instances, community_tokens):
     return ret
 
 def read_clustering_data(data_dir, token):
-    cluster_file = os.path.join(data_dir, OUT_FOLDER, f"{token}_clustering.json")
+    cluster_file = os.path.join(data_dir, WORD_CLUSTERS_DIR, f"{token}_clustering.json")
     return json.load(open(cluster_file, 'r'))
 
 if __name__ == "__main__":
@@ -111,7 +114,7 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError
 
-    out_dir = os.path.join(args.data_dir, OUT_FOLDER)
+    out_dir = os.path.join(args.data_dir, WORD_CLUSTERS_DIR)
 
     args.out_dir = out_dir
     if not os.path.exists(out_dir):

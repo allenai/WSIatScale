@@ -38,7 +38,7 @@ Run by `streamlit run app.py`
 We first want to index all words in the LM vocab with something like this:
 
 ```
-python WSIatScale/create_inverted_index.py --replacements_dir .../replacements/ --outdir .../inverted_index --dataset Wikipedia-BERT > indexing.log 2>&1 &
+python WSIatScale/create_inverted_index.py --replacements_dir .../replacements/ --outdir .../inverted_index --dataset Wikipedia-BERT
 ```
 
 Then we want to precompute clusters for all words:
@@ -48,12 +48,16 @@ python -m WSIatScale.cluster_reps_per_token --data_dir .../bert/ --dataset Wikip
 
 And finally we want to find all instances of words by cluster:
 ```
-...
+python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/ --dataset Wikipedia-BERT
 ```
 
+After that, opionally we can find for each community its closest communities:
+```
+python -m WSIatScale.look_for_similar_communities --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/ --dataset Wikipedia-BERT
+```
 
 
 # Quick Access For debugging
 ```
-from transformers import AutoTokenizer; model_hg_path = 'bert-large-cased-whole-word-masking'; tok = AutoTokenizer.from_pretrained(model_hg_path, use_fast=True)
-tok.decode([])
+from transformers import AutoTokenizer; model_hf_path = 'bert-large-cased-whole-word-masking'; tok = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
+tok.encode('bass', add_special_tokens=False) == 2753
