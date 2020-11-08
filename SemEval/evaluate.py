@@ -7,13 +7,16 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from typing import Dict, Tuple
+from functools import partial
+from multiprocessing import Pool, cpu_count
 
 import numpy as np
 from tqdm import tqdm
 from transformers import AutoTokenizer
 from WSIatScale.analyze import read_files
 from WSIatScale.clustering import MyBOWHierarchicalLinkage
-from WSIatScale.community_detection import CommunityFinder
+from WSIatScale.community_detection import find_communities_and_vote, label_by_comms
+from utils.utils import SpecialTokens
 
 
 def main(args):
@@ -24,11 +27,15 @@ def evaluate_2010(args):
     gold_dir = "/home/matane/matan/dev/SemEval/resources/SemEval-2010/evaluation/"
     labeling = label_2010(args)
     scores = evaluate_labeling_2010(gold_dir, labeling)
+    # print(scores)
+    # for word, word_scores in scores.items():
+    #     print(word, word_scores['FScore'], word_scores['V-Measure'])
     fscore = scores['all']['FScore']
     v_measure = scores['all']['V-Measure']
     msg = 'SemEval 2010 FScore %.2f V-Measure %.2f AVG %.2f' % (fscore * 100, v_measure * 100, math.sqrt(fscore * v_measure) * 100)
-    msg += '\n' + get_score_by_pos(scores)
+    # msg += '\n' + get_score_by_pos(scores)
     print(msg)
+    return msg
 
 def evaluate_labeling_2010(dir_path, labeling: Dict[str, Dict[str, int]], key_path: str = None) \
         -> Tuple[Dict[str, Dict[str, float]], Tuple]:
@@ -106,35 +113,47 @@ def get_score_by_pos(results):
     return res_string
 
 def community_detection_labelling(args, data_dir, lemmas, instance_id_to_doc_id):
+    labeling = {}
     model_hf_path, n_reps = args.model_hf_path, args.n_reps
     doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
 
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
 
-    labeling = {}
-    # lemmas = ['market']
-    for lemma in tqdm(lemmas):
-        rep_instances, _ = read_files(lemma,
-                                      data_dir,
-                                      sample_n_files=-1,
-                                      full_stop_index=None,
-                                      should_lemmatize=True,
-                                      bar=lambda x: x)
-        rep_instances.populate_specific_size(n_reps)
-        if args.remove_query_word or args.remove_stop_words:
-            rep_instances.remove_certain_words(args.remove_query_word, args.remove_stop_words, tokenizer, lemma)
-        community_finder = CommunityFinder(rep_instances, args.query_n_reps)
-        communities = community_finder.find()
+    partial_single_lemma_comm_detection = partial(single_lemma_comm_detection,
+        data_dir=data_dir,
+        model_hf_path=model_hf_path,
+        n_reps=n_reps,
+        args=args,
+        tokenizer=tokenizer,
+        doc_id_to_inst_id=doc_id_to_inst_id)
 
-        _, communities_sents_data = community_finder.argmax_voting(communities, rep_instances)
-        # community_tokens, communities_sents_data = community_finder.merge_small_clusters(community_tokens, communities_sents_data)
+    # with Pool(cpu_count()) as p:
+    #     imap_it = tqdm(p.imap(partial_single_lemma_comm_detection, lemmas), total=len(lemmas))
+    #     for lemma_labeling in imap_it:
+    #         labeling.update(lemma_labeling)
+    # return labeling
 
-        for cluster, rep_instances in enumerate(communities_sents_data):
-            for rep_inst in rep_instances:
-                lemma_inst_id = doc_id_to_inst_id[rep_inst.doc_id]
-                labeling[lemma_inst_id] = cluster
-
+    for lemma in lemmas:
+        labeling.update(partial_single_lemma_comm_detection(lemma))
     return labeling
+
+def single_lemma_comm_detection(lemma, data_dir, model_hf_path, n_reps, args, tokenizer, doc_id_to_inst_id):
+    rep_instances, _ = read_files(lemma,
+        data_dir,
+        sample_n_instances=-1,
+        special_tokens=SpecialTokens(model_hf_path),
+        should_lemmatize=True,
+        instance_attributes=['doc_ids', 'reps', 'tokens'],
+        bar=lambda x: x
+        )
+    if args.remove_query_word:
+        rep_instances.remove_query_word(tokenizer, lemma)
+    rep_instances.populate_specific_size(n_reps)
+    communities_sents_data, _ = find_communities_and_vote(rep_instances, args.query_n_reps, args.resolution, args.seed)
+
+    lemma_labeling = label_by_comms(communities_sents_data, doc_id_to_inst_id)
+
+    return lemma_labeling
 
 def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_doc_id):
     model_hf_path, n_reps = args.model_hf_path, args.n_reps
@@ -144,18 +163,21 @@ def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_do
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
 
     labeling = {}
-    for lemma in tqdm(lemmas):
+    # for lemma in tqdm(lemmas):
+    for lemma in lemmas:
         rep_instances, _ = read_files(lemma,
-                                              data_dir,
-                                              sample_n_files=-1,
-                                              should_lemmatize=True,
-                                              full_stop_index=None,
-                                              bar=lambda x: x)
+            data_dir,
+            sample_n_instances=-1,
+            special_tokens=SpecialTokens(model_hf_path),
+            should_lemmatize=True,
+            instance_attributes=['doc_ids', 'reps', 'tokens'],
+            bar=lambda x: x)
         rep_instances.populate_specific_size(n_reps)
         if args.remove_query_word or args.remove_stop_words:
             rep_instances.remove_certain_words(args.remove_query_word, args.remove_stop_words, tokenizer, lemma)
+        doc_ids = [inst.doc_id for inst in rep_instances.data]
         clusters = model.fit_predict(rep_instances)
-        for doc_id, cluster in clusters.items():
+        for doc_id, cluster in zip(doc_ids, clusters):
             lemma_inst_id = doc_id_to_inst_id[doc_id]
             labeling[lemma_inst_id] = {cluster: 1}
 
@@ -263,7 +285,8 @@ def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_do
 
 #     return ret
 
-if __name__ == "__main__":
+
+def prepare_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--data_dir2010", type=str)
@@ -274,5 +297,10 @@ if __name__ == "__main__":
     parser.add_argument("--labeling_function", type=str, choices=['clustering', 'communities'])
     parser.add_argument("--remove_query_word", action='store_true')
     parser.add_argument("--remove_stop_words", action='store_true')
-    args = parser.parse_args()
+    parser.add_argument("--resolution", type=float, default=1.)
+    parser.add_argument("--seed", type=int, default=111)
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = prepare_args()
     main(args)

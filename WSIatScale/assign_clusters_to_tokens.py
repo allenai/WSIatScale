@@ -20,6 +20,7 @@ SENTS_BY_CLUSTER = 'sents_by_cluster'
 
 TOP_REPS_TO_LOOK_ON = 10
 HALF_WORDS_LIST = np.load(f"non-full-words/non-full-words-bert-large-cased-whole-word-masking.npy") #Just for BERT
+# TODO HALF_WORDS_LIST is available in the special tokens object
 
 def main(args):
     model_hf_path = tokenizer_params[args.dataset]

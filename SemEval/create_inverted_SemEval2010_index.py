@@ -13,22 +13,23 @@ from xml.etree import ElementTree
 tokenizer_params = {'RoBERTa': 'roberta-large',
                     'bert-large-uncased': 'bert-large-uncased',}
 
-def main(replacements_dir, outdir, model):
+def main(data_dir, outdir, model):
 
-    inst_id_to_doc_id = json.load(open(os.path.join(replacements_dir, "../instance_id_to_doc_id.json"), 'r'))
-    inst_id_to_target_pos = json.load(open(os.path.join(replacements_dir, "../instance_id_to_target_pos.json"), 'r'))
+    inst_id_to_doc_id = json.load(open(os.path.join(data_dir, "instance_id_to_doc_id.json"), 'r'))
+    inst_id_to_target_pos = json.load(open(os.path.join(data_dir, "instance_id_to_target_pos.json"), 'r'))
     doc_id_to_inst_id = {v:k for k,v in inst_id_to_doc_id.items()}
-    index(replacements_dir, outdir, model, doc_id_to_inst_id, inst_id_to_target_pos)
+    index(data_dir, outdir, model, doc_id_to_inst_id, inst_id_to_target_pos)
 
-def index(replacements_dir, outdir, model, doc_id_to_inst_id, inst_id_to_target_pos, bar=tqdm):
+def index(data_dir, outdir, model, doc_id_to_inst_id, inst_id_to_target_pos, bar=tqdm):
     index_dict = {}
 
-    all_files = os.listdir(replacements_dir)
-    all_files = [f for f in all_files if f.endswith('npz')]
+    replacements_dir = os.path.join(data_dir, '../replacements')
+    all_files = set([f"{file.split('-')[0]}-{file.split('-')[1]}" for file in os.listdir(replacements_dir)])
+
     for filename in tqdm(all_files):
-        npzfile = np.load(os.path.join(replacements_dir, filename))
-        doc_ids = npzfile['doc_ids']
-        sent_lengths = npzfile['sent_lengths']
+        base_path = os.path.join(replacements_dir, filename)
+        doc_ids = np.load(f"{base_path}-doc_ids.npy")
+        sent_lengths = np.load(f"{base_path}-lengths.npy")
         inst_ids = [doc_id_to_inst_id[k] for k in doc_ids]
         target_positions = [int(inst_id_to_target_pos[k]) for k in inst_ids]
         lemmas = [k.split('.')[0] for k in inst_ids]
@@ -58,7 +59,7 @@ def index(replacements_dir, outdir, model, doc_id_to_inst_id, inst_id_to_target_
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--replacements_dir", type=str, default="replacements")
+    parser.add_argument("--data_dir", type=str)
     parser.add_argument("--outdir", type=str, default='inverted_index')
     parser.add_argument("--model", type=str, choices=['RoBERTa', 'bert-large-uncased'])
 
@@ -67,4 +68,4 @@ if __name__ == "__main__":
     if not os.path.exists(args.outdir):
         os.makedirs(args.outdir)
 
-    main(args.replacements_dir, args.outdir, args.model) 
+    main(args.data_dir, args.outdir, args.model)

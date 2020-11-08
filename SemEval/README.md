@@ -5,7 +5,7 @@ python write_mask_preds.py --data_dir ../../SemEval/resources/SemEval-2010/test_
 
 Create Inverted Index 
 ```
-python SemEval/create_inverted_index.py --replacements_dir ... --outdir .../inverted_index --model bert-large-uncased/RoBERTa --data_file .../semeval-2013-task-13-test-data.senseval2.xml
+python -m SemEval.create_inverted_SemEval2010_index.py --data_dir ... --outdir .../inverted_index --model bert-large-uncased/RoBERTa --data_file .../semeval-2013-task-13-test-data.senseval2.xml
 ```
 
 
