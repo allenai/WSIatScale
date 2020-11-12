@@ -81,12 +81,12 @@ def find_communities_and_vote(rep_instances, query_n_reps, resolution, seed):
     community_finder = CommunityFinder(rep_instances, query_n_reps)
     communities = community_finder.find(resolution=resolution, seed=seed)
 
-    communities_tokens, communities_sents_data, _ = community_finder.argmax_voting(communities, rep_instances)
+    communities_tokens, communities_sents_data, communities_dists = community_finder.argmax_voting(communities, rep_instances)
     # communities_tokens, communities_sents_data = community_finder.merge_small_clusters(communities_tokens,
     #     communities_sents_data,
     #     communities_dists,
     #     minimal_community_proportional_ratio)
-    presenting_payload = (community_finder, communities, communities_tokens)
+    presenting_payload = (community_finder, communities, communities_tokens, communities_dists)
     return communities_sents_data, presenting_payload
 
 def label_by_comms(communities_sents_data, doc_id_to_inst_id):
@@ -95,6 +95,14 @@ def label_by_comms(communities_sents_data, doc_id_to_inst_id):
         for rep_inst in rep_instances:
             lemma_inst_id = doc_id_to_inst_id[rep_inst.doc_id]
             lemma_labeling[lemma_inst_id] = cluster
+    return lemma_labeling
+
+def label_by_comms_dist(communities_sents_data, communities_dists, doc_id_to_inst_id):
+    lemma_labeling = {}
+    for rep_instances, dists in zip(communities_sents_data, communities_dists):
+        for rep_inst, dist in zip(rep_instances, dists):
+            lemma_inst_id = doc_id_to_inst_id[rep_inst.doc_id]
+            lemma_labeling[lemma_inst_id] = dist
     return lemma_labeling
 
     # # Deprecated

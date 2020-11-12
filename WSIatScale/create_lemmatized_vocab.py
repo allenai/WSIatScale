@@ -8,16 +8,16 @@ from transformers import AutoTokenizer
 
 LEMMATIZED_VOCAB_FILE = 'lemmatized_vocab.json'
 
-def create_lemmatized_vocab(outdir, model_hf_path):
-    lemmatized_vocab = prepare_lemmatized_vocab(model_hf_path)
+def create_lemmatized_vocab(outdir, model):
+    lemmatized_vocab = prepare_lemmatized_vocab(model)
     outfile = os.path.join(outdir, LEMMATIZED_VOCAB_FILE)
     json.dump(lemmatized_vocab, open(outfile, 'w'))
 
-def prepare_lemmatized_vocab(model_hf_path):
+def prepare_lemmatized_vocab(model):
     same_count = 0
     lemmatized_vocab = {}
     nlp = spacy.load("en_core_web_lg", disable=['ner', 'parser'])
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(model, use_fast=True)
     vocab = tokenizer.get_vocab()
     for word, index in tqdm(vocab.items()):
         lemma = lemmatize_with_exceptions(nlp, tokenizer, vocab, index, word)
@@ -77,6 +77,6 @@ def lemmatize_with_exceptions(nlp, tokenizer, vocab, index, word):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--outdir", type=str, required=True)
-    parser.add_argument("--model_hf_path", type=str, choices=['bert-large-uncased', 'bert-large-cased-whole-word-masking'])
+    parser.add_argument("--model", type=str, choices=['bert-large-uncased', 'bert-large-cased-whole-word-masking'])
     args = parser.parse_args()
-    create_lemmatized_vocab(args.outdir, args.model_hf_path)
+    create_lemmatized_vocab(args.outdir, args.model)

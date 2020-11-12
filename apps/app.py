@@ -76,7 +76,7 @@ def main():
         try:
             token = tokenize(tokenizer, w) if dataset != 'SemEval2010' else w
         except ValueError as e:
-            st.write('Word given is more than a single wordpiece. Please choose a different word.')
+            st.write(f'Word {w} is more than a single wordpiece. Please choose a different word.')
 
         if token:
             curr_word_rep_instances = read_files_from_cache(args, token, n_reps, sample_n_files, full_stop_index)

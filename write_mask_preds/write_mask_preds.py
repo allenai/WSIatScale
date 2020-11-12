@@ -75,7 +75,7 @@ def initialize_models(device, args):
     if args.fp16:
         from apex import amp # pylint: disable=import-error
         model = amp.initialize(model, opt_level="O2")
-        
+
     assert tokenizer.vocab_size < 65535 # Saving pred_ids as np.uint16
     return tokenizer, model
 
@@ -119,13 +119,11 @@ def write_replacements_to_file(outfile, doc_ids, inputs, replacements, probs):
     probs_without_identity = probs.masked_select(~identity_replacements).view(-1, TOP_N_WORDS-1)
     normalized_probs_without_identity = probs_without_identity/probs_without_identity.sum(1).unsqueeze(1)
 
-    np.savez(outfile,
-        doc_ids=doc_ids.cpu().numpy().astype(np.int32),
-        sent_lengths=sent_lengths.cpu().numpy().astype(np.int16),
-        tokens=tokens.cpu().numpy().astype(np.uint16),
-        replacements=reps_without_identity.cpu().numpy().astype(np.uint16),
-        probs=normalized_probs_without_identity.cpu().numpy().astype(np.float16),
-    )
+    np.save(f"{outfile}-tokens.npy", tokens.cpu().numpy().astype(np.uint16))
+    np.save(f"{outfile}-lengths.npy", sent_lengths.cpu().numpy().astype(np.int16))
+    np.save(f"{outfile}-reps.npy", reps_without_identity.cpu().numpy().astype(np.uint16))
+    np.save(f"{outfile}-probs.npy", normalized_probs_without_identity.cpu().numpy().astype(np.float16))
+    np.save(f"{outfile}-doc_ids.npy", doc_ids.cpu().numpy().astype(np.int32))
 
 def dict_to_device(inputs, device):
     if device.type == 'cpu': return

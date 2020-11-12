@@ -143,7 +143,7 @@ class RepInstances:
 def tokenize(tokenizer, word):
     token = tokenizer.encode(word, add_special_tokens=False)
     if len(token) > 1:
-        raise ValueError('Word given is more than a single wordpiece.')
+        raise ValueError(f'Word {word} is more than a single wordpiece.')
     token = token[0]
     return token
 
@@ -180,7 +180,7 @@ def read_files(token,
     return rep_instances, msg
 
 def npy_file_path(data_dir, f, a):
-    return os.path.join(os.path.join(data_dir, '..', REPS_DIR), f"{f}-{a}.npy")
+    return os.path.join(os.path.join(data_dir, REPS_DIR), f"{f}-{a}.npy")
 
 def find_paragraph_and_positions(token_positions, tokens, lengths, doc_ids):
     token_positions = np.array(token_positions)

@@ -15,17 +15,19 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 from WSIatScale.analyze import read_files
 from WSIatScale.clustering import MyBOWHierarchicalLinkage
-from WSIatScale.community_detection import find_communities_and_vote, label_by_comms
+from WSIatScale.community_detection import find_communities_and_vote, label_by_comms, label_by_comms_dist
 from utils.utils import SpecialTokens
 
 
 def main(args):
-    evaluate_2010(args)
-    # evaluate_2013(args)
+    if args.data_dir2010 is not None:
+        evaluate_2010(args)
+    if args.data_dir2013 is not None:
+        evaluate_2013(args)
 
 def evaluate_2010(args):
     gold_dir = "/home/matane/matan/dev/SemEval/resources/SemEval-2010/evaluation/"
-    labeling = label_2010(args)
+    labeling = label(args, args.data_dir2010, 'argmax')
     scores = evaluate_labeling_2010(gold_dir, labeling)
     # print(scores)
     # for word, word_scores in scores.items():
@@ -33,7 +35,20 @@ def evaluate_2010(args):
     fscore = scores['all']['FScore']
     v_measure = scores['all']['V-Measure']
     msg = 'SemEval 2010 FScore %.2f V-Measure %.2f AVG %.2f' % (fscore * 100, v_measure * 100, math.sqrt(fscore * v_measure) * 100)
-    # msg += '\n' + get_score_by_pos(scores)
+    msg += '\n' + get_score_by_pos(scores)
+    print(msg)
+    return msg
+
+def evaluate_2013(args):
+    gold_dir = '/home/matane/matan/dev/SemEval/resources/SemEval-2013-Task-13-test-data'
+    labeling = label(args, args.data_dir2013, 'dist')
+    scores = evaluate_labeling_2013(gold_dir, labeling)
+    # print(scores)
+    # for word, word_scores in scores.items():
+    #     print(word, word_scores['FNMI'], word_scores['FBC'])
+    fnmi = scores['all']['FNMI']
+    fbc = scores['all']['FBC']
+    msg = 'SemEval 2013 FNMI %.2f FBC %.2f AVG %.2f' % (fnmi * 100, fbc * 100, math.sqrt(fnmi * fbc) * 100)
     print(msg)
     return msg
 
@@ -81,19 +96,6 @@ def get_2010_scores(dir_path, unsup_key, eval_key):
                 ret['all'][metric] = float(line.split(metric + ':')[1])
     return ret
 
-def label_2010(args):
-    if args.labeling_function == 'clustering':
-        labeling_function = bow_hierarchical_linkage_labelling
-    else:
-        labeling_function = community_detection_labelling
-    instance_id_to_doc_id = json.load(open(os.path.join(args.data_dir2010, "instance_id_to_doc_id.json"), 'r'))
-    lemmas = sorted(set([k.split('.')[0] for k in instance_id_to_doc_id.keys()]))
-
-    return labeling_function(args,
-        args.data_dir2010,
-        lemmas,
-        instance_id_to_doc_id)
-
 def get_score_by_pos(results):
     res_string = ''
     for pos, pos_title in [('v', 'VERB'), ('n', 'NOUN'), ('j', 'ADJ')]:
@@ -112,7 +114,7 @@ def get_score_by_pos(results):
             res_string += f' AVG: {avg*100:.2f}\n'
     return res_string
 
-def community_detection_labelling(args, data_dir, lemmas, instance_id_to_doc_id):
+def community_detection_labelling(args, data_dir, lemmas, instance_id_to_doc_id, voting_method):
     labeling = {}
     model_hf_path, n_reps = args.model_hf_path, args.n_reps
     doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
@@ -125,19 +127,21 @@ def community_detection_labelling(args, data_dir, lemmas, instance_id_to_doc_id)
         n_reps=n_reps,
         args=args,
         tokenizer=tokenizer,
+        voting_method=voting_method,
         doc_id_to_inst_id=doc_id_to_inst_id)
 
-    # with Pool(cpu_count()) as p:
-    #     imap_it = tqdm(p.imap(partial_single_lemma_comm_detection, lemmas), total=len(lemmas))
-    #     for lemma_labeling in imap_it:
-    #         labeling.update(lemma_labeling)
-    # return labeling
+    with Pool(cpu_count()) as p:
+        imap_it = tqdm(p.imap(partial_single_lemma_comm_detection, lemmas), total=len(lemmas))
+        for lemma_labeling in imap_it:
+            labeling.update(lemma_labeling)
+    return labeling
 
+    # lemmas = ['book.n', 'book.v']
     for lemma in lemmas:
         labeling.update(partial_single_lemma_comm_detection(lemma))
     return labeling
 
-def single_lemma_comm_detection(lemma, data_dir, model_hf_path, n_reps, args, tokenizer, doc_id_to_inst_id):
+def single_lemma_comm_detection(lemma, data_dir, model_hf_path, n_reps, args, tokenizer, voting_method, doc_id_to_inst_id):
     rep_instances, _ = read_files(lemma,
         data_dir,
         sample_n_instances=-1,
@@ -147,15 +151,19 @@ def single_lemma_comm_detection(lemma, data_dir, model_hf_path, n_reps, args, to
         bar=lambda x: x
         )
     if args.remove_query_word:
-        rep_instances.remove_query_word(tokenizer, lemma)
+        rep_instances.remove_query_word(tokenizer, lemma.split('.')[0])
     rep_instances.populate_specific_size(n_reps)
-    communities_sents_data, _ = find_communities_and_vote(rep_instances, args.query_n_reps, args.resolution, args.seed)
+    communities_sents_data, presenting_payload = find_communities_and_vote(rep_instances, args.query_n_reps, args.resolution, args.seed)
 
-    lemma_labeling = label_by_comms(communities_sents_data, doc_id_to_inst_id)
+    if voting_method == 'argmax':
+        lemma_labeling = label_by_comms(communities_sents_data, doc_id_to_inst_id)
+    elif voting_method == 'dist':
+        _, _, _, communities_dists = presenting_payload
+        lemma_labeling = label_by_comms_dist(communities_sents_data, communities_dists, doc_id_to_inst_id)
 
     return lemma_labeling
 
-def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_doc_id):
+def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_doc_id, voting_method):
     model_hf_path, n_reps = args.model_hf_path, args.n_reps
     model = MyBOWHierarchicalLinkage()
     doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
@@ -183,25 +191,20 @@ def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_do
 
     return labeling
 
-# def evaluate_2013(args):
-#     gold_dir = '/home/matane/matan/dev/SemEval/resources/SemEval-2013-Task-13-test-data'
-#     labeling = label_2013(args)
-#     scores = evaluate_labeling_2013(gold_dir, labeling)
-#     fnmi = scores['all']['FNMI']
-#     fbc = scores['all']['FBC']
-#     msg = 'SemEval 2013 FNMI %.2f FBC %.2f AVG %.2f' % (fnmi * 100, fbc * 100, math.sqrt(fnmi * fbc) * 100)
-#     # FNMI:21.4(0.5) FBC:64.0(0.5) Geom. mean:37.0(0.5)
-#     # (previous SOTA 11.3,57.5,25.4)
-#     print(msg)
+def label(args, data_dir, voting_method):
+    if args.labeling_alg == 'clustering':
+        labeling_alg = bow_hierarchical_linkage_labelling
+    else:
+        labeling_alg = community_detection_labelling
+    instance_id_to_doc_id = json.load(open(os.path.join(data_dir, "instance_id_to_doc_id.json"), 'r'))
+    # lemmas = sorted(set(['.'.join(k.split('.', 2)[:2]) for k in instance_id_to_doc_id.keys()]))
+    lemmas = set([k.split('.')[0] for k in instance_id_to_doc_id.keys()])
 
-# def label_2013(args):
-#     instance_id_to_doc_id = json.load(open(os.path.join(args.data_dir2010, "instance_id_to_doc_id.json"), 'r'))
-#     lemmas = set([k.split('.')[0] for k in instance_id_to_doc_id.keys()])
-#     return community_detection_labelling(args.model_hf_path,
-#         args.data_dir2013,
-#         args.n_reps,
-#         lemmas,
-#         instance_id_to_doc_id)
+    return labeling_alg(args,
+        data_dir,
+        lemmas,
+        instance_id_to_doc_id,
+        voting_method)
 
 # from xml.etree import ElementTree
 # def read_semeval_2013(dir_path: str):
@@ -230,71 +233,71 @@ def bow_hierarchical_linkage_labelling(args, data_dir, lemmas, instance_id_to_do
 #                 yield inst_id
 
 
-# def evaluate_labeling_2013(dir_path, labeling: Dict[str, Dict[str, int]], key_path: str = None) \
-#         -> Tuple[Dict[str, Dict[str, float]], Tuple]:
-#     """
-#     labeling example : {'become.v.3': {'become.sense.1':3,'become.sense.5':17} ... }
-#     means instance become.v.3' is 17/20 in sense 'become.sense.5' and 3/20 in sense 'become.sense.1'
-#     :param key_path: write produced key to this file
-#     :param dir_path: SemEval dir
-#     :param labeling: instance id labeling
-#     :return: FNMI, FBC as calculated by SemEval provided code
-#     """
-#     logging.info('starting evaluation key_path: %s' % key_path)
+def evaluate_labeling_2013(gold_dir, labeling: Dict[str, Dict[str, int]], key_path: str = None) \
+        -> Tuple[Dict[str, Dict[str, float]], Tuple]:
+    """
+    labeling example : {'become.v.3': {'become.sense.1':3,'become.sense.5':17} ... }
+    means instance become.v.3' is 17/20 in sense 'become.sense.5' and 3/20 in sense 'become.sense.1'
+    :param key_path: write produced key to this file
+    :param gold_dir: SemEval dir
+    :param labeling: instance id labeling
+    :return: FNMI, FBC as calculated by SemEval provided code
+    """
+    logging.info('starting evaluation key_path: %s' % key_path)
 
-#     with tempfile.NamedTemporaryFile('wt') as fout:
-#         lines = []
-#         for instance_id, clusters_dict in labeling.items():
-#             clusters = sorted(clusters_dict.items(), key=lambda x: x[1])
-#             clusters_str = ' '.join([('%s/%d' % (cluster_name, count)) for cluster_name, count in clusters])
-#             lemma_pos = instance_id.rsplit('.', 1)[0]
-#             lines.append('%s %s %s' % (lemma_pos, instance_id, clusters_str))
-#         fout.write('\n'.join(lines))
-#         fout.flush()
-#         gold_key_path = os.path.join(dir_path, 'keys/gold/all.key')
-#         scores = get_2013_scores(dir_path, gold_key_path, fout.name)
-#         if key_path:
-#             logging.info('writing key to file %s' % key_path)
-#             with open(key_path, 'w', encoding="utf-8") as fout2:
-#                 fout2.write('\n'.join(lines))
+    with tempfile.NamedTemporaryFile('wt') as fout:
+        lines = []
+        for instance_id, clusters_dict in labeling.items():
+            clusters = sorted(clusters_dict.items(), key=lambda x: x[1])
+            clusters_str = ' '.join([('%s/%d' % (cluster_name, count)) for cluster_name, count in clusters])
+            lemma_pos = instance_id.rsplit('.', 1)[0]
+            lines.append('%s %s %s' % (lemma_pos, instance_id, clusters_str))
+        fout.write('\n'.join(lines))
+        fout.flush()
+        gold_key_path = os.path.join(gold_dir, 'keys/gold/all.key')
+        scores = get_2013_scores(gold_dir, gold_key_path, fout.name)
+        if key_path:
+            logging.info('writing key to file %s' % key_path)
+            with open(key_path, 'w', encoding="utf-8") as fout2:
+                fout2.write('\n'.join(lines))
 
-#         # correlation = get_n_senses_corr(gold_key_path, fout.name)
+        # correlation = get_n_senses_corr(gold_key_path, fout.name)
 
-#     return scores
+    return scores
 
-# def get_2013_scores(dir_path, gold_key, eval_key):
-#     ret = {}
-#     for metric, jar, column in [
-#         ('FNMI', os.path.join(dir_path, 'scoring/fuzzy-nmi.jar'), 1),
-#         ('FBC', os.path.join(dir_path, 'scoring/fuzzy-bcubed.jar'), 3),
-#     ]:
-#         logging.info('calculating metric %s' % metric)
-#         res = subprocess.Popen(['java', '-jar', jar, gold_key, eval_key], stdout=subprocess.PIPE).stdout.readlines()
-#         for line in res:
-#             line = line.decode().strip()
-#             if line.startswith('term'):
-#                 pass
-#             else:
-#                 split = line.split('\t')
-#                 if len(split) > column:
-#                     word = split[0]
-#                     result = split[column]
-#                     if word not in ret:
-#                         ret[word] = {}
-#                     ret[word][metric] = float(result)
+def get_2013_scores(dir_path, gold_key, eval_key):
+    ret = {}
+    for metric, jar, column in [
+        ('FNMI', os.path.join(dir_path, 'scoring/fuzzy-nmi.jar'), 1),
+        ('FBC', os.path.join(dir_path, 'scoring/fuzzy-bcubed.jar'), 3),
+    ]:
+        logging.info('calculating metric %s' % metric)
+        res = subprocess.Popen(['java', '-jar', jar, gold_key, eval_key], stdout=subprocess.PIPE).stdout.readlines()
+        for line in res:
+            line = line.decode().strip()
+            if line.startswith('term'):
+                pass
+            else:
+                split = line.split('\t')
+                if len(split) > column:
+                    word = split[0]
+                    result = split[column]
+                    if word not in ret:
+                        ret[word] = {}
+                    ret[word][metric] = float(result)
 
-#     return ret
+    return ret
 
 
 def prepare_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--data_dir2010", type=str)
-    parser.add_argument("--data_dir2013", type=str, default='/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2013/bert-large-uncased')
+    parser.add_argument("--data_dir2013", type=str)
     parser.add_argument("--n_reps", type=int, default=20)
     parser.add_argument("--query_n_reps", type=int, default=10)
     parser.add_argument("--model_hf_path", type=str, default='bert-large-uncased')
-    parser.add_argument("--labeling_function", type=str, choices=['clustering', 'communities'])
+    parser.add_argument("--labeling_alg", type=str, choices=['clustering', 'communities'], default='communities')
     parser.add_argument("--remove_query_word", action='store_true')
     parser.add_argument("--remove_stop_words", action='store_true')
     parser.add_argument("--resolution", type=float, default=1.)
