@@ -1,21 +1,26 @@
 # pylint: disable=no-member
 from collections import Counter
+import json
 import numpy as np
+import os
 import pandas as pd
 import streamlit as st
 from transformers import AutoTokenizer
 import tokenizers
 import random
+import sys
+sys.path.append('/home/matane/matan/dev/WSIatScale')
 
 from WSIatScale.analyze import (read_files,
                                 RepInstances,
                                 prepare_arguments,
                                 tokenize)
-from WSIatScale.clustering import Jaccard, ClusterFactory
-from WSIatScale.community_detection import CommunityFinder
+from WSIatScale.clustering import ClusterFactory
+from WSIatScale.community_detection import find_communities_and_vote, CommunityFinder, label_by_comms, label_by_comms_dist
 from WSIatScale.apriori import run_apriori
+from SemEval.evaluate import evaluate_labeling_2010, evaluate_labeling_2013
 
-from utils.utils import StreamlitTqdm
+from utils.utils import StreamlitTqdm, SpecialTokens
 import altair as alt
 
 import networkx as nx
@@ -24,31 +29,31 @@ from PIL import Image
 
 SEED = 111
 
-@st.cache(suppress_st_warning=True, allow_output_mutation=True)
-def cached_read_files_specific_n_reps(token, data_dir, sample_n_files, full_stop_index, n_reps):
-    rep_instances, msg  = read_files(token, data_dir, sample_n_files, full_stop_index, bar=StreamlitTqdm)
+@st.cache(hash_funcs={tokenizers.Tokenizer: id}, suppress_st_warning=True, allow_output_mutation=True)
+def cached_read_files_specific_n_reps(tokenizer, lemma, data_dir, special_tokens, remove_query_word, n_reps):
+    rep_instances, msg  = read_files(lemma, data_dir, -1, special_tokens, instance_attributes=['doc_id', 'reps', 'tokens'], bar=StreamlitTqdm)
+    if remove_query_word:
+        rep_instances.remove_query_word(tokenizer, lemma.split('.')[0])
     rep_instances.populate_specific_size(n_reps)
-    return rep_instances, msg 
+    return rep_instances, msg
 
 @st.cache(hash_funcs={tokenizers.Tokenizer: id}, suppress_st_warning=True, allow_output_mutation=True)
 def cached_tokenizer(model_hf_path):
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
     return tokenizer
 
-@st.cache(hash_funcs={RepInstances: id}, suppress_st_warning=True, allow_output_mutation=True)
-def cached_jaccard_distances(rep_instances):
-    rep_instances = [{'reps': k, 'examples': v} for k, v in sorted(rep_instances.data.items(), key=lambda kv: len(kv[1]), reverse=True)]
-    jaccard_distances = Jaccard().pairwise_distance([x['reps'] for x in rep_instances])
-    return jaccard_distances, rep_instances
+# @st.cache(hash_funcs={RepInstances: id}, suppress_st_warning=True, allow_output_mutation=True)
+# def cached_CommunityFinder(rep_instances, n_reps):
+#     return CommunityFinder(rep_instances, n_reps)
+
+# @st.cache(hash_funcs={CommunityFinder: id}, suppress_st_warning=True, allow_output_mutation=True)
+# def cached_find_communities(community_finder, method):
+#     communities = community_finder.find(method)
+#     return communities
 
 @st.cache(hash_funcs={RepInstances: id}, suppress_st_warning=True, allow_output_mutation=True)
-def cached_CommunityFinder(rep_instances, args):
-    return CommunityFinder(rep_instances, args)
-
-@st.cache(hash_funcs={CommunityFinder: id}, suppress_st_warning=True, allow_output_mutation=True)
-def cached_find_communities(community_finder, method):
-    communities = community_finder.find(method)
-    return communities
+def cached_find_communities_and_vote(rep_instances, query_n_reps, resolution):
+    return find_communities_and_vote(rep_instances, query_n_reps, resolution=resolution, seed=111)
 
 @st.cache(hash_funcs={CommunityFinder: id, tokenizers.Tokenizer: id}, suppress_st_warning=True, allow_output_mutation=True)
 def cached_create_graph(community_finder, communities, tokenizer):
@@ -57,42 +62,32 @@ def cached_create_graph(community_finder, communities, tokenizer):
 def main():
     st.title('WSI at Scale')
 
-    dataset = st.sidebar.selectbox('Dataset', ('Wikipedia', 'CORD-19', 'SemEval2010', 'SemEval2013'), 2)
+    dataset = st.sidebar.selectbox('Dataset', ('SemEval2010', 'SemEval2013'), 1)
     args = prepare_arguments()
-    example_word, full_stop_index = dataset_configs(dataset, args)
+    example_word, special_tokens = dataset_configs(dataset, args)
 
     tokenizer = cached_tokenizer(args.model_hf_path)
-    half_words_list = np.load(f"non-full-words/non-full-words-{args.model_hf_path}.npy")
 
     word = st.sidebar.text_input('Word to disambiguate: (Split multiple words by `;` no space)', example_word)
-    n_reps = st.sidebar.slider(f"Number of replacements (Taken from {args.model_hf_path}'s masked LM)", 1, 100, 20)
+    n_reps = st.sidebar.slider(f"Number of replacements (Taken from {args.model_hf_path}'s masked LM)", 1, 100, 50)
     args.n_reps = n_reps
 
-    sample_n_files = st.sidebar.number_input("Number of files", min_value=1, max_value=10000, value=1000)
-    args.sample_n_files = sample_n_files
     if word == '': return
 
     rep_instances = None
+
+    remove_query_word = st.checkbox('remove_query_word', value=True)
+
     for w in word.split(';'):
-        token = None
         args.word = w
 
-        try:
-            token = tokenize(tokenizer, w) if dataset != 'SemEval2010' else w
-        except ValueError as e:
-            st.write('Word given is more than a single wordpiece. Please choose a different word.')
+        curr_word_rep_instances, msg = cached_read_files_specific_n_reps(tokenizer, w, args.data_dir, special_tokens, remove_query_word, n_reps)
+        st.write(msg)
 
-        if token:
-            curr_word_rep_instances = read_files_from_cache(args, token, n_reps, sample_n_files, full_stop_index)
-            curr_word_rep_instances.remove_certain_words(word=w,
-                                                         tokenizer=tokenizer,
-                                                         remove_query_word=True,
-                                                         half_words_list=half_words_list)
-
-            if rep_instances is None:
-                rep_instances = curr_word_rep_instances
-            else:
-                rep_instances.merge(curr_word_rep_instances)
+        if rep_instances is None:
+            rep_instances = curr_word_rep_instances
+        else:
+            rep_instances.merge(curr_word_rep_instances)
 
 
     action = st.sidebar.selectbox(
@@ -111,71 +106,42 @@ def main():
         display_apriori(tokenizer, rep_instances)
 
 def dataset_configs(dataset, args):
-    if dataset == 'Wikipedia':
-        model = st.sidebar.selectbox('Model', ('RoBERTa', 'BERT'), 0)
-        if model == 'RoBERTa':
-            args.model_hf_path = 'roberta-large'
-            args.data_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/wiki/all'
-            example_word = ' bass'
-            full_stop_index = 4
-        else:
-            args.model_hf_path = 'bert-large-cased-whole-word-masking'
-            args.data_dir = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/'
-            example_word = 'bass'
-            full_stop_index = 119
-    elif dataset == 'CORD-19':
-        args.model_hf_path = 'allenai/scibert_scivocab_uncased'
-        args.data_dir = '/mnt/disks/mnt1/datasets/processed_for_WSI/CORD-19'
-        example_word = 'race'
-        full_stop_index = 205
-    elif dataset == 'SemEval2010':
+    if dataset == 'SemEval2010':
+        args.dataset = 'SemEval2010'
         args.model_hf_path = 'bert-large-uncased'
         # args.data_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased'
-        args.data_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased-no-double-instances'
-        example_word = 'officer'
-        full_stop_index = None
+        # args.data_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased-no-double-instances'
+        args.data_dir = '/mnt/disks/mnt2/datasets/SemEval/SemEval2010/bert-large-uncased-redoing-semeval'
+        args.gold_file = "/home/matane/matan/dev/SemEval/resources/SemEval-2010/evaluation/unsup_eval/keys/all.key"
+        example_word = 'market'
+        special_tokens = SpecialTokens(args.model_hf_path)
     elif dataset == 'SemEval2013':
+        args.dataset = 'SemEval2013'
         args.model_hf_path = 'bert-large-uncased'
-        args.data_dir = '/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2013/bert-large-uncased'
-        example_word = 'become'
-        full_stop_index = None
-    return example_word, full_stop_index
-
-def read_files_from_cache(args, token, n_reps, sample_n_files, full_stop_index):
-    try:
-        rep_instances, msg = cached_read_files_specific_n_reps(token, args.data_dir, sample_n_files, full_stop_index, n_reps)
-        st.write(msg)
-        return rep_instances
-    except ValueError as e:
-        st.write(e)
+        args.data_dir = '/mnt/disks/mnt2/datasets/SemEval/SemEval2013/bert'
+        example_word = 'become.v'
+        args.gold_file = '/home/matane/matan/dev/SemEval/resources/SemEval-2013-Task-13-test-data/keys/gold/all.key'
+        special_tokens = SpecialTokens(args.model_hf_path)
+    return example_word, special_tokens
 
 def display_clusters(args, tokenizer, rep_instances, cluster_alg, n_sents_to_print):
     clustering_load_state = st.text('Clustering...')
-    if cluster_alg != 'BOW Hierarchical':
-        jaccard_distances, rep_instances = cached_jaccard_distances(rep_instances)
-        model = ClusterFactory.make(cluster_alg, args)
-        clusters = model.fit_predict(jaccard_distances)
-        clustered_reps = model.reps_to_their_clusters(clusters, rep_instances)
-        representative_sents = model.representative_sents(clusters, rep_instances, jaccard_distances, n_sents_to_print)
-    else:
-        model = ClusterFactory.make(cluster_alg, args)
-        clusters = model.fit_predict(rep_instances)
-        clustered_reps = model.reps_to_their_clusters(clusters, rep_instances)
-        representative_sents = model.representative_sents(clustered_reps, -1)
+
+    model = ClusterFactory.make(cluster_alg, args)
+    clusters = model.fit_predict(rep_instances)
+    clustered_reps = model.reps_to_their_clusters(clusters, rep_instances)
+    representative_sents = model.representative_sents(clustered_reps, -1)
 
     st.header(f"Found {len(set(clusters))} clusters.")
-    # <REMOVE DBUGGING SEMEVAL2010 >
-    import json
-    instance_id_to_doc_id = json.load(open('/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased-no-query-word/instance_id_to_doc_id.json', 'r'))
+    instance_id_to_doc_id = json.load(open(os.path.join(args.data_dir, 'instance_id_to_doc_id.json'), 'r'))
     doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
-    gold_file = open("/home/matane/matan/dev/SemEval/resources/SemEval-2010/evaluation/unsup_eval/keys/all.key", 'r')
-    gold_inst_id_to_sense = {}
-    for gold in gold_file:
-        if args.word in gold:
-            line = gold.rstrip().split(' ')
-            gold_inst_id_to_sense[line[1]] = line[2]
+    with open("/home/matane/matan/dev/SemEval/resources/SemEval-2010/evaluation/unsup_eval/keys/all.key", 'r') as gold_file:
+        gold_inst_id_to_sense = {}
+        for gold in gold_file:
+            if args.word in gold:
+                line = gold.rstrip().split(' ')
+                gold_inst_id_to_sense[line[1]] = line[2]
     st.write(Counter([cluster for row_id, cluster in gold_inst_id_to_sense.items()]))
-    # </REMOVE DBUGGING SEMEVAL2010 >
     for words_in_cluster, sents_data, msg in model.group_for_display(args, tokenizer, clustered_reps, representative_sents):
         st.subheader(msg['header'])
         st.write(msg['found'])
@@ -191,7 +157,6 @@ def display_clusters(args, tokenizer, rep_instances, cluster_alg, n_sents_to_pri
             )
             chart.configure_axis(labelFontSize=0)
             st.altair_chart(chart, use_container_width=True)
-            # <REMOVE DBUGGING SEMEVAL2010 >
             clusters_doc_ids = [rep.doc_id for rep in sents_data]
             counter = Counter([cluster for row_id, cluster in gold_inst_id_to_sense.items() if instance_id_to_doc_id[row_id] in clusters_doc_ids])
             from collections import OrderedDict
@@ -201,12 +166,6 @@ def display_clusters(args, tokenizer, rep_instances, cluster_alg, n_sents_to_pri
                 reps_text = " ".join([tokenizer.decode([rep]).lstrip() for rep in rep_inst.reps])
                 sense = gold_inst_id_to_sense[doc_id_to_inst_id[rep_inst.doc_id]]
                 st.write(f"* {sense} - **{reps_text}:** ", text)
-            # </REMOVE DBUGGING SEMEVAL2010 >
-            # <REMOVE DBUGGING SEMEVAL2010 remove uncomment >
-            # if n_sents_to_print > 0:
-            #     st.write('**Exemplary Sentences**')
-            #     for sent_data in sents_data:
-            #         st.write(f"* {tokenizer.decode(sent_data.sent).lstrip()}")
 
     clustering_load_state.text('')
 
@@ -215,81 +174,86 @@ def display_communities(args, tokenizer, rep_instances):
         'Community Algorithm',
         ('louvain', 'Weighted Girvan-Newman', 'Girvan-Newman', 'async LPA', 'Weighted async LPA', 'Clauset-Newman-Moore (no weights)'),
         index=0)
-    
-    args.cluster_as_initial_partition = False
-    args.log_weighted_edges = False
-    args.prune_infrequent_edges = False
-    args.voting_method_str = 'voting_distribution_query_of_smaller_size'
-    if st.checkbox("Prune Infrequent Edges"):
-        args.prune_infrequent_edges = True
+
     n_sents_to_print = st.number_input('Exemplary Sentences to Present', value=3, min_value=0)
     at_least_n_matches = st.number_input('Number of Minimum Sentence Matches', value=1, min_value=0, max_value=100)
-    community_finder = cached_CommunityFinder(rep_instances, args)
-    communities = cached_find_communities(community_finder, community_alg)
-    
-    communities_tokens, communities_sents_data = community_finder.argmax_voting(communities, rep_instances, args.voting_method_str)
-    # communities_tokens, communities_sents_data = community_finder.merge_small_clusters(communities_tokens, communities_sents_data)
+    query_n_reps = st.number_input('query_n_reps', value=5)
+    resolution = st.slider('resolution', min_value=1., max_value=1.5, step=0.1, value=1.2)
 
-    print_communities(args.word, #REMOVE just for debugging
+    communities_sents_data, (community_finder, communities, communities_tokens, communities_dists) = cached_find_communities_and_vote(rep_instances, query_n_reps, resolution)
+    instance_id_to_doc_id = json.load(open(os.path.join(args.data_dir, 'instance_id_to_doc_id.json'), 'r'))
+    doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
+
+    if args.dataset == 'SemEval2010':
+        lemma_labeling = label_by_comms(communities_sents_data, doc_id_to_inst_id)
+        scores = evaluate_labeling_2010("/home/matane/matan/dev/SemEval/resources/SemEval-2010/evaluation/", lemma_labeling)
+        for lemma in scores:
+            if args.word in lemma:
+                fscore = scores[lemma]['FScore']
+                vmeasure = scores[lemma]['V-Measure']
+                st.write(fscore, vmeasure, round(((fscore*vmeasure)**0.5)*100, 2))
+    else:
+        lemma_labeling = label_by_comms_dist(communities_sents_data, communities_dists, doc_id_to_inst_id)
+        scores = evaluate_labeling_2013('/home/matane/matan/dev/SemEval/resources/SemEval-2013-Task-13-test-data', lemma_labeling)
+        for lemma in scores:
+            if args.word in lemma:
+                fscore = scores[lemma]['FNMI']
+                vmeasure = scores[lemma]['FBC']
+                st.write(fscore, vmeasure, round(((fscore*vmeasure)**0.5)*100, 2))
+
+    print_communities(args,
                       tokenizer,
                       community_finder,
                       communities,
                       communities_tokens,
                       communities_sents_data,
                       n_sents_to_print,
-                      at_least_n_matches)
+                      at_least_n_matches,
+                      instance_id_to_doc_id,
+                      doc_id_to_inst_id)
 
-def print_communities(word, #REMOVE just for debugging
+def print_communities(args,
                       tokenizer,
                       community_finder,
                       communities,
                       communities_tokens,
                       communities_sents_data,
                       n_sents_to_print,
-                      at_least_n_matches):
+                      at_least_n_matches,
+                      instance_id_to_doc_id,
+                      doc_id_to_inst_id):
     num_skipped = 0
     random.seed(SEED)
-    # <REMOVE DBUGGING SEMEVAL2010 >
-    import json
-    instance_id_to_doc_id = json.load(open('/home/matane/matan/dev/WSIatScale/write_mask_preds/out/SemEval2010/bert-large-uncased-no-query-word/instance_id_to_doc_id.json', 'r'))
-    doc_id_to_inst_id = {v:k for k,v in instance_id_to_doc_id.items()}
-    gold_file = open("/home/matane/matan/dev/SemEval/resources/SemEval-2010/evaluation/unsup_eval/keys/all.key", 'r')
-    gold_inst_id_to_sense = {}
-    for gold in gold_file:
-        if word in gold:
-            line = gold.rstrip().split(' ')
-            gold_inst_id_to_sense[line[1]] = line[2]
+    with open(args.gold_file, 'r') as gold_file:
+        gold_inst_id_to_sense = {}
+        for gold in gold_file:
+            if args.word in gold:
+                line = gold.rstrip().split(' ')
+                gold_inst_id_to_sense[line[1]] = line[2]
     st.write(Counter([cluster for row_id, cluster in gold_inst_id_to_sense.items()]))
-    # </REMOVE DBUGGING SEMEVAL2010 >
-    for comm, rep_instances in zip(communities_tokens, communities_sents_data):
+    for i, (comm, rep_instances) in enumerate(zip(communities_tokens, communities_sents_data)):
         if len(rep_instances) < at_least_n_matches:
             num_skipped += 1
             continue
         random.shuffle(rep_instances)
         checkbox_text = get_checkbox_text(comm, rep_instances, tokenizer)
-        display_sents = st.checkbox(checkbox_text + f" - ({len(rep_instances)} sents)")
+        display_sents = st.checkbox(checkbox_text + f" - ({len(rep_instances)} sents)", value=True)
         if display_sents:
-            # <REMOVE DBUGGING SEMEVAL2010 >
-            community_doc_ids = [rep.doc_id for rep in rep_instances]
-            counter = Counter([cluster for row_id, cluster in gold_inst_id_to_sense.items() if instance_id_to_doc_id[row_id] in community_doc_ids])
-            from collections import OrderedDict
-            st.write(OrderedDict(counter.most_common()))
-            for rep_inst in rep_instances[:n_sents_to_print]:
-                text = f"{tokenizer.decode(rep_inst.sent).lstrip()}"
-                reps_text = " ".join([tokenizer.decode([rep]).lstrip() for rep in rep_inst.reps])
-                sense = gold_inst_id_to_sense[doc_id_to_inst_id[rep_inst.doc_id]]
-                st.write(f"* {sense} - **{reps_text}:** ", text)
-            # </REMOVE DBUGGING SEMEVAL2010 >
-            # <REMOVE DBUGGING SEMEVAL2010 remove uncomment >
-            # for rep_inst in rep_instances[:n_sents_to_print]:
-            #     text = f"{tokenizer.decode(rep_inst.sent).lstrip()}"
-            #     reps_text = " ".join([tokenizer.decode([rep]).lstrip() for rep in rep_inst.reps])
-            #     st.write(f"* **{reps_text}:** ", text)
+            map_gold_sense_to_sent = {sense: [] for sense in gold_inst_id_to_sense.values()}
+            for rep_inst in rep_instances:
+                gold_sense = gold_inst_id_to_sense[doc_id_to_inst_id[rep_inst.doc_id]]
+                map_gold_sense_to_sent[gold_sense].append(rep_inst)
+            for gold_sense, rep_instances in map_gold_sense_to_sent.items():
+                if len(rep_instances) > 0 and st.checkbox(f"{gold_sense} ({len(rep_instances)})", key=f"{gold_sense}, {i}, {len(rep_instances)}"):
+                    for rep_inst in rep_instances[:n_sents_to_print]:
+                        text = f"{tokenizer.decode(rep_inst.sent).lstrip()}"
+                        reps_text = " ".join([tokenizer.decode([rep]).lstrip() for rep in rep_inst.reps])
+                        st.write(f"* **{reps_text}:** ", text)
     if num_skipped > 0:
         st.write(f"Skipped {num_skipped} communities with less than {at_least_n_matches} sentences.")
 
-    cached_create_graph(community_finder, communities, tokenizer)
-    print_graph()
+    # cached_create_graph(community_finder, communities, tokenizer)
+    # print_graph()
 
 def get_checkbox_text(comm, rep_instances, tokenizer):
     max_words_to_display = 10
@@ -306,7 +270,7 @@ def get_checkbox_text(comm, rep_instances, tokenizer):
     return checkbox_text
 
 def create_graph(community_finder, communities, tokenizer):
-    
+
     original_G = nx.from_numpy_matrix(community_finder.cooccurrence_matrix)
     components = list(nx.connected_components(original_G))
     nodes_of_largest_component  = max(components, key = len)
@@ -331,7 +295,7 @@ def create_graph(community_finder, communities, tokenizer):
         weights = nx.get_edge_attributes(G, 'weight')
         weights = {k: int(v) for k, v in weights.items()}
         nx.draw_networkx_edge_labels(G, pos, font_size=6, edge_labels=weights)
-    
+
     if len(G.nodes()) <= 50:
         node2word = {n: tokenizer.decode([community_finder.node2token[n]]) for n in G.nodes()}
     else:

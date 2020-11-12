@@ -60,4 +60,5 @@ python -m WSIatScale.look_for_similar_communities --data_dir /mnt/disks/mnt2/dat
 # Quick Access For debugging
 ```
 from transformers import AutoTokenizer; model_hf_path = 'bert-large-cased-whole-word-masking'; tok = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
-tok.encode('bass', add_special_tokens=False) == 2753
+tok.encode('bass', add_special_tokens=False)[0] == 2753
+```

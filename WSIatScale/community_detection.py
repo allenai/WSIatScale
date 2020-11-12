@@ -5,8 +5,6 @@ import community as community_louvain
 import networkx as nx
 import numpy as np
 
-SEED = 111
-
 class CommunityFinder:
     def __init__(self, rep_instances, query_size=100):
         self.query_size = query_size
@@ -40,13 +38,16 @@ class CommunityFinder:
         cooccurrence_matrix = np.zeros((mat_size, mat_size))
         return node2token, token2node, cooccurrence_matrix
 
-    def find(self, method='louvain'):
+    def find(self, method='louvain', resolution=1, seed=111):
         G = nx.from_numpy_matrix(self.cooccurrence_matrix)
         if method == 'louvain':
-            best_partition = community_louvain.best_partition(G, random_state=SEED, resolution=1)
+            best_partition = community_louvain.best_partition(G, random_state=seed, resolution=resolution)
             communities = [[] for _ in range(max(best_partition.values())+1)]
             for n, c in best_partition.items():
                 communities[c].append(n)
+        elif method == 'leiden':
+            from cdlib import algorithms
+            communities = algorithms.leiden(G, weights='weight').communities
         else:
             raise "Couldn't find community algorithm"
 
@@ -55,16 +56,15 @@ class CommunityFinder:
     def argmax_voting(self, communities, rep_instances):
         community_tokens, dist_with_instances = self.voting_distribution(communities, rep_instances)
         communities_sents_data = [[] for c in range(len(communities))]
+        communities_dists = [[] for c in range(len(communities))]
 
-        cant_find_any_reps = 0
         for dist, rep_inst in dist_with_instances:
             argmax = max(dist, key=dist.get)
             communities_sents_data[argmax].append(rep_inst)
-        if cant_find_any_reps > 0:
-            print(f"Couldn't find any replacemnts for {cant_find_any_reps} instances")
+            communities_dists[argmax].append(dist)
 
-        community_tokens, communities_sents_data = zip(*sorted(zip(community_tokens, communities_sents_data), key=lambda x: len(x[1]), reverse=True))
-        return community_tokens, communities_sents_data #TODO Why do I need to return community tokens?
+        community_tokens, communities_sents_data, communities_dists = zip(*sorted(zip(community_tokens, communities_sents_data, communities_dists), key=lambda x: len(x[1]), reverse=True))
+        return community_tokens, communities_sents_data, communities_dists
 
     def voting_distribution(self, communities, rep_instances):
         community_tokens = [[self.node2token[n] for n in comm] for comm in communities]
@@ -76,6 +76,34 @@ class CommunityFinder:
             voting_dist.append((counter, rep_inst))
 
         return community_tokens, voting_dist
+
+def find_communities_and_vote(rep_instances, query_n_reps, resolution, seed):
+    community_finder = CommunityFinder(rep_instances, query_n_reps)
+    communities = community_finder.find(resolution=resolution, seed=seed)
+
+    communities_tokens, communities_sents_data, communities_dists = community_finder.argmax_voting(communities, rep_instances)
+    # communities_tokens, communities_sents_data = community_finder.merge_small_clusters(communities_tokens,
+    #     communities_sents_data,
+    #     communities_dists,
+    #     minimal_community_proportional_ratio)
+    presenting_payload = (community_finder, communities, communities_tokens, communities_dists)
+    return communities_sents_data, presenting_payload
+
+def label_by_comms(communities_sents_data, doc_id_to_inst_id):
+    lemma_labeling = {}
+    for cluster, rep_instances in enumerate(communities_sents_data):
+        for rep_inst in rep_instances:
+            lemma_inst_id = doc_id_to_inst_id[rep_inst.doc_id]
+            lemma_labeling[lemma_inst_id] = cluster
+    return lemma_labeling
+
+def label_by_comms_dist(communities_sents_data, communities_dists, doc_id_to_inst_id):
+    lemma_labeling = {}
+    for rep_instances, dists in zip(communities_sents_data, communities_dists):
+        for rep_inst, dist in zip(rep_instances, dists):
+            lemma_inst_id = doc_id_to_inst_id[rep_inst.doc_id]
+            lemma_labeling[lemma_inst_id] = dist
+    return lemma_labeling
 
     # # Deprecated
     # def prune_infrequent_edges(self):
@@ -98,20 +126,6 @@ class CommunityFinder:
     #         communities[c].append(n)
 
     #     return communities
-
-    # # Deprecated
-    # def merge_small_clusters(self, community_tokens, communities_sents_data):
-    #     community_tokens_without_small_clusters, communities_sents_data_without_small_clusters = [community_tokens[0]], [communities_sents_data[0]]
-    #     for comm_tokens, comm_sents_data in zip(community_tokens[1:], communities_sents_data[1:]):
-    #         if len(comm_sents_data) > 3:
-    #             community_tokens_without_small_clusters.append(comm_tokens)
-    #             communities_sents_data_without_small_clusters.append(comm_sents_data)
-    #         else:
-    #             #TODO this should be to the "closest" community.
-    #             community_tokens_without_small_clusters[0] += comm_tokens
-    #             communities_sents_data_without_small_clusters[0] += comm_sents_data
-
-    #     return community_tokens_without_small_clusters, communities_sents_data_without_small_clusters
 
     # # Deprecated
     # def clustering_for_initial_partition(self):
@@ -165,3 +179,23 @@ class CommunityFinder:
     #         dist_with_instances.append((voting_dist, rep_inst))
 
     #     return community_tokens, dist_with_instances
+
+
+    # # Deprecated
+    # def merge_small_clusters(self, community_tokens, communities_sents_data, communities_dists, minimal_community_proportional_ratio):
+    #     community_tokens_without_small_clusters, communities_sents_data_without_small_clusters = [], []
+    #     number_of_instances = sum(len(sents) for sents in communities_sents_data)
+    #     community_ids_added = {}
+    #     for i, (comm_tokens, comm_sents_data, coms_dist) in enumerate(zip(community_tokens, communities_sents_data, communities_dists)):
+    #         if i == 0 or len(comm_sents_data) > number_of_instances * minimal_community_proportional_ratio:
+    #             community_tokens_without_small_clusters.append(comm_tokens)
+    #             communities_sents_data_without_small_clusters.append(comm_sents_data)
+    #             community_ids_added[coms_dist[0].most_common(1)[0][0]] = i
+    #         else:
+    #             for sent_data, dist in zip(comm_sents_data, coms_dist):
+    #                 for com_idx, _ in dist.most_common():
+    #                     if com_idx in community_ids_added:
+    #                         communities_sents_data_without_small_clusters[community_ids_added[com_idx]].append(sent_data)
+    #                         break
+
+    #     return community_tokens_without_small_clusters, communities_sents_data_without_small_clusters

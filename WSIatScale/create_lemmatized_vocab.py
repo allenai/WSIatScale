@@ -6,18 +6,18 @@ from tqdm import tqdm
 
 from transformers import AutoTokenizer
 
-LEMMATIZED_VOCAB_FILE = 'lemmatized_vocab_no_middle_words.json'
+LEMMATIZED_VOCAB_FILE = 'lemmatized_vocab.json'
 
-def create_lemmatized_vocab(outdir, model_hf_path):
-    lemmatized_vocab = prepare_lemmatized_vocab(model_hf_path)
+def create_lemmatized_vocab(outdir, model):
+    lemmatized_vocab = prepare_lemmatized_vocab(model)
     outfile = os.path.join(outdir, LEMMATIZED_VOCAB_FILE)
     json.dump(lemmatized_vocab, open(outfile, 'w'))
 
-def prepare_lemmatized_vocab(model_hf_path):
+def prepare_lemmatized_vocab(model):
     same_count = 0
     lemmatized_vocab = {}
-    nlp = spacy.load("en", disable=['ner', 'parser'])
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
+    nlp = spacy.load("en_core_web_lg", disable=['ner', 'parser'])
+    tokenizer = AutoTokenizer.from_pretrained(model, use_fast=True)
     vocab = tokenizer.get_vocab()
     for word, index in tqdm(vocab.items()):
         lemma = lemmatize_with_exceptions(nlp, tokenizer, vocab, index, word)
@@ -33,7 +33,7 @@ def prepare_lemmatized_vocab(model_hf_path):
         if original_token != lemma_token:
             print(f"{tokenizer.decode([original_token])} -> {tokenizer.decode([lemma_token])}")
     print(f"Out of {len(vocab)} tokens, {same_count} are left unchanged.")
-    
+
     return lemmatized_vocab
 
 def lemmatize_with_exceptions(nlp, tokenizer, vocab, index, word):
@@ -52,23 +52,24 @@ def lemmatize_with_exceptions(nlp, tokenizer, vocab, index, word):
         return word
     elif word in should_singalize_with_caps:
         return word[:-1]
-    
-    if word in ['im', 'id', 'cannot', 'wed', 'gotta']: #not good enough lemmatizing.
+
+    if word in ['cannot', 'gotta']: #not good enough lemmatizing.
         ret = word
     else:
         spacy_token = nlp(word)[0]
         if spacy_token.lemma_ == '-PRON-':
             ret = word
-        ret = spacy_token.lemma_
-    
-        if len(capitalized_letters) > 0:
-            if len(capitalized_letters) == 1:
-                ret = ret.capitalize()
-            else:
-                ret = ret.upper()
+        else:
+            ret = spacy_token.lemma_
 
-        if ret not in vocab:
-            ret = word
+            if len(capitalized_letters) > 0:
+                if len(capitalized_letters) == 1:
+                    ret = ret.capitalize()
+                else:
+                    ret = ret.upper()
+
+            if ret not in vocab:
+                ret = word
 
     return ret
 
@@ -76,6 +77,6 @@ def lemmatize_with_exceptions(nlp, tokenizer, vocab, index, word):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--outdir", type=str, required=True)
-    parser.add_argument("--model_hf_path", type=str, choices=['bert-large-uncased', 'bert-large-cased-whole-word-masking'])
+    parser.add_argument("--model", type=str, choices=['bert-large-uncased', 'bert-large-cased-whole-word-masking'])
     args = parser.parse_args()
-    create_lemmatized_vocab(args.outdir, args.model_hf_path)
+    create_lemmatized_vocab(args.outdir, args.model)

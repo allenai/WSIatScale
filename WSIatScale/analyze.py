@@ -34,13 +34,13 @@ class RepInstances:
         for paragraph, token_pos_in_paragraph, global_token_pos, doc_id in paragraph_and_positions:
             for local_pos, global_pos in zip(token_pos_in_paragraph, global_token_pos):
                 single_sent, _ = self.find_single_sent_around_token(paragraph, local_pos, special_tokens) \
-                    if 'sent' in instance_attributes else (None, None)
+                    if 'tokens' in instance_attributes else (None, None)
                 curr_reps = np.array(reps[global_pos]) if 'reps' in instance_attributes else None
                 curr_probs = np.array(probs[global_pos]) if 'probs' in instance_attributes else None
-                if self.lemmatized_vocab_path:
-                    curr_reps, curr_probs = self.lemmatize_reps_and_probs(curr_reps, curr_probs)
                 curr_reps, curr_probs = self.remove_specific_tokens(special_tokens.half_words_list, curr_reps, curr_probs)
                 curr_reps, curr_probs = self.remove_specific_tokens(special_tokens.stop_words_and_punctuation, curr_reps, curr_probs)
+                if self.lemmatized_vocab_path:
+                    curr_reps, curr_probs = self.lemmatize_reps_and_probs(curr_reps, curr_probs)
                 self.data.append(Instance(doc_id=doc_id,
                                           reps=curr_reps,
                                           probs=curr_probs,
@@ -49,10 +49,10 @@ class RepInstances:
     def populate_just_reps(self, token_positions, reps, special_tokens):
         for global_pos in token_positions:
             curr_reps = np.array(reps[global_pos])
-            if self.lemmatized_vocab_path:
-                curr_reps, _ = self.lemmatize_reps_and_probs(curr_reps)
             curr_reps, _ = self.remove_specific_tokens(special_tokens.half_words_list, curr_reps)
             curr_reps, _ = self.remove_specific_tokens(special_tokens.stop_words_and_punctuation, curr_reps)
+            if self.lemmatized_vocab_path:
+                curr_reps, _ = self.lemmatize_reps_and_probs(curr_reps)
             self.data.append(Instance(reps=curr_reps))
 
     def lemmatize_reps_and_probs(self, curr_reps, curr_probs=None):
@@ -78,7 +78,7 @@ class RepInstances:
             instance.reps = instance.reps[:n_reps]
             if instance.probs is not None:
                 instance.probs = instance.probs[:n_reps]
-                instance.probs /= instance.probs.sum()
+                instance.probs /= sum(instance.probs)
 
     def remove_empty_replacements(self):
         indices_to_remove = []
@@ -88,14 +88,20 @@ class RepInstances:
 
         for i in indices_to_remove[::-1]:
             assert len(self.data[i].reps) == 0
+            # print(self.data[i])
             del self.data[i]
 
-    def remove_query_word(self, tokenizer, token):
-        tokens_to_remove = [token]
+    def remove_query_word(self, tokenizer, original_word):
+        words_to_remove = set((original_word, original_word.lower(), original_word.title()))
+        tokens_to_remove = set()
+        for word in words_to_remove:
+            token = tokenizer.encode(word, add_special_tokens=False)
+            if len(token) == 1:
+                tokens_to_remove.add(token[0])
 
-        token_in_title = tokenizer.encode(tokenizer.decode([token]).title(), add_special_tokens=False)
-        if len(token_in_title) == 1:
-            tokens_to_remove += token_in_title
+        for key, value in self.lemmatized_vocab.items():
+            if value in tokens_to_remove:
+                tokens_to_remove.add(key)
 
         for instance in self.data:
             if instance.probs is None:
@@ -137,7 +143,7 @@ class RepInstances:
 def tokenize(tokenizer, word):
     token = tokenizer.encode(word, add_special_tokens=False)
     if len(token) > 1:
-        raise ValueError('Word given is more than a single wordpiece.')
+        raise ValueError(f'Word {word} is more than a single wordpiece.')
     token = token[0]
     return token
 
@@ -145,8 +151,8 @@ def read_files(token,
                data_dir,
                sample_n_instances,
                special_tokens,
-               should_lemmatize=False,
-               instance_attributes=['doc_id', 'reps', 'probs', 'sent'],
+               should_lemmatize=True,
+               instance_attributes=['doc_id', 'reps', 'probs', 'tokens'],
                inverted_index_dir=INVERTED_INDEX_DIR,
                bar=tqdm):
     files_to_pos = read_inverted_index(os.path.join(data_dir, inverted_index_dir), token, sample_n_instances)
@@ -188,7 +194,7 @@ def find_paragraph_and_positions(token_positions, tokens, lengths, doc_ids):
 def read_inverted_index(inverted_index, token, sample_n_instances):
     inverted_index_file = os.path.join(inverted_index, f"{token}.jsonl")
     if not os.path.exists(inverted_index_file):
-        raise ValueError(f'token {token} is not in inverted index')
+        raise ValueError(f'token {token} is not in inverted index {inverted_index}')
     index = {}
     with open(inverted_index_file, 'r') as f:
         for line in f:
