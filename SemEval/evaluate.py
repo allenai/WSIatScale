@@ -16,8 +16,7 @@ from transformers import AutoTokenizer
 from WSIatScale.analyze import read_files
 from WSIatScale.clustering import MyBOWHierarchicalLinkage
 from WSIatScale.community_detection import find_communities_and_vote, label_by_comms, label_by_comms_dist
-from utils.utils import SpecialTokens
-
+from utils.special_tokens import SpecialTokens
 
 def main(args):
     if args.data_dir2010 is not None:

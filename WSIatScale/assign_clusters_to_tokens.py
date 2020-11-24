@@ -11,31 +11,28 @@ from tqdm import tqdm
 
 from transformers import AutoTokenizer
 
-from WSIatScale.create_inverted_index import full_words_tokens
-from WSIatScale.analyze import npy_file_path, REPS_DIR
+from WSIatScale.analyze import npy_file_path, REPS_DIR, RepInstances
 from WSIatScale.cluster_reps_per_token import read_clustering_data
 from utils.utils import tokenizer_params, jaccard_score_between_elements
+from utils.special_tokens import SpecialTokens
 
 SENTS_BY_CLUSTER = 'sents_by_cluster'
 
 TOP_REPS_TO_LOOK_ON = 10
-HALF_WORDS_LIST = np.load(f"non-full-words/non-full-words-bert-large-cased-whole-word-masking.npy") #Just for BERT
-# TODO HALF_WORDS_LIST is available in the special tokens object
 
 def main(args):
     model_hf_path = tokenizer_params[args.dataset]
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
-    replacements_dir = os.path.join(args.data_dir, REPS_DIR)
-    tokens_to_index = full_words_tokens(args.dataset, tokenizer)
+    special_tokens = SpecialTokens(model_hf_path)
+    replacements_dir = os.path.join(args.data_dir, '..', REPS_DIR)
 
     files = data_files(replacements_dir)
     print(f"total {len(files)} files.")
-    partial_find_and_write = partial(find_and_write, data_dir=args.data_dir, tokens_to_index=tokens_to_index, replacements_dir=replacements_dir)
+    partial_find_and_write = partial(find_and_write, data_dir=args.data_dir, special_tokens=special_tokens, replacements_dir=replacements_dir)
     with Pool(cpu_count()) as p:
         list(tqdm(p.imap(partial_find_and_write, files), total=len(files)))
 
-def find_and_write(filename, data_dir, tokens_to_index, replacements_dir):
-    tokens_to_clusters = find_clusters(os.path.join(replacements_dir, filename), data_dir, tokens_to_index)
+def find_and_write(filename, data_dir, special_tokens, replacements_dir):
+    tokens_to_clusters = find_clusters(os.path.join(replacements_dir, filename), data_dir, special_tokens)
     write_clusters(data_dir, filename, tokens_to_clusters)
 
 def data_files(replacements_dir):
@@ -46,14 +43,19 @@ def data_files(replacements_dir):
     
     return files
 
-def find_clusters(filename, data_dir, tokens_to_index):
+def find_clusters(filename, data_dir, special_tokens):
     tokens_to_clusters = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
     all_tokens = np.load(npy_file_path(data_dir, filename, 'tokens'), mmap_mode='r')
     all_reps = np.load(npy_file_path(data_dir, filename, 'reps'), mmap_mode='r')
     for pos, (token, token_reps) in enumerate(zip(all_tokens, all_reps)):
-        if token in tokens_to_index and bert_full_word_validator(all_tokens, pos):
-            top_token_reps = token_reps[:TOP_REPS_TO_LOOK_ON]
-            clustering_data = read_clustering_data(data_dir, token)
+        if special_tokens.valid_token(token) and next_token_validator(special_tokens, all_tokens, pos):
+            lemmatized_token = special_tokens.lemmatize(token)
+            if not special_tokens.valid_token(lemmatized_token): continue
+            rep_inst = RepInstances(lemmatized_vocab=special_tokens.lemmatized_vocab)
+            rep_inst.clean_and_populate_reps(reps=token_reps, special_tokens=special_tokens)
+            rep_inst.populate_specific_size(TOP_REPS_TO_LOOK_ON)
+            top_token_reps = rep_inst.data[0].reps
+            clustering_data = read_clustering_data(data_dir, lemmatized_token)
             for method in clustering_data.keys():
                 for n_reps in clustering_data[method]:
                     token_precomputed_clusters = clustering_data[method][n_reps]
@@ -65,7 +67,8 @@ def find_clusters(filename, data_dir, tokens_to_index):
 
                     if len(jaccard_scores) > 0:
                         cluster_id, best_jaccard_score = max(enumerate(jaccard_scores), key=itemgetter(1))
-                        tokens_to_clusters[token][method][n_reps][cluster_id].append((pos, best_jaccard_score))
+                        if best_jaccard_score > 0:
+                            tokens_to_clusters[lemmatized_token][method][n_reps][cluster_id].append((pos, best_jaccard_score))
 
     return tokens_to_clusters
 
@@ -80,14 +83,12 @@ def write_clusters(data_dir, reps_file, tokens_to_clusters):
                         stringed_positions_and_confidence = ' '.join([f"{p},{round(c, 2)}" for p, c in positions_and_confidence])
                         f.write(f"{reps_file}\t{stringed_positions_and_confidence}\n")
 
-def bert_full_word_validator(tokens, pos):
+def next_token_validator(special_tokens, tokens, pos):
     if pos + 1 == len(tokens):
         return True
-    if tokens[pos + 1] in HALF_WORDS_LIST:
+    if tokens[pos + 1] in special_tokens.half_words_list:
         return False
     return True
-    # 'Wikipedia-RoBERTa'
-    #     raise NotImplementedError
 
 
 if __name__ == "__main__":

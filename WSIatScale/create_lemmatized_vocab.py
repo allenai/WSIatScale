@@ -6,11 +6,9 @@ from tqdm import tqdm
 
 from transformers import AutoTokenizer
 
-LEMMATIZED_VOCAB_FILE = 'lemmatized_vocab.json'
-
 def create_lemmatized_vocab(outdir, model):
     lemmatized_vocab = prepare_lemmatized_vocab(model)
-    outfile = os.path.join(outdir, LEMMATIZED_VOCAB_FILE)
+    outfile = os.path.join(outdir, f"lemmatized_vocabs-{model}.json")
     json.dump(lemmatized_vocab, open(outfile, 'w'))
 
 def prepare_lemmatized_vocab(model):

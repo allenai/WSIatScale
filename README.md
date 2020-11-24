@@ -35,25 +35,31 @@ Run by `streamlit run app.py`
 
 ## at_scale_app.py
 
-We first want to index all words in the LM vocab with something like this:
-
+First thing, create lemmatized vocab (~1 minute):
 ```
-python WSIatScale/create_inverted_index.py --replacements_dir .../replacements/ --outdir .../inverted_index --dataset Wikipedia-BERT
-```
-
-Then we want to precompute clusters for all words:
-```
-python -m WSIatScale.cluster_reps_per_token --data_dir .../bert/ --dataset Wikipedia-BERT
+python WSIatScale/create_lemmatized_vocab.py --model bert-large-cased-whole-word-masking --outdir lemmatized_vocabs/
 ```
 
-And finally we want to find all instances of words by cluster:
+We want to index all words in the LM vocab with something like this (~5 minutes with 96 cpu cores):
+
 ```
-python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/ --dataset Wikipedia-BERT
+python -m WSIatScale.create_inverted_index --replacements_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/replacements --outdir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2/inverted_index/ --dataset Wikipedia-BERT
 ```
 
-After that, opionally we can find for each community its closest communities:
+Then we want to precompute clusters for all words (~1:30 hours with 96 cpu cores):
 ```
-python -m WSIatScale.look_for_similar_communities --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/ --dataset Wikipedia-BERT
+python -m WSIatScale.cluster_reps_per_token --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2/ --dataset Wikipedia-BERT > cluster_reps_per_token.log 2>&1 &
+```
+Now you can start viewing results in `at_scale_app.py`
+
+We want to find all instances of words by cluster (~8:30 hours with 96 cpu cores):
+```
+python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2 --dataset Wikipedia-BERT
+```
+
+Finaly, we can find for each community its closest communities: (per method, n_reps ~2 minutes. so max ~12 minutes.)
+```
+python -m WSIatScale.look_for_similar_communities --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2 --dataset Wikipedia-BERT
 ```
 
 

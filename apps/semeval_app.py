@@ -20,7 +20,8 @@ from WSIatScale.community_detection import find_communities_and_vote, CommunityF
 from WSIatScale.apriori import run_apriori
 from SemEval.evaluate import evaluate_labeling_2010, evaluate_labeling_2013
 
-from utils.utils import StreamlitTqdm, SpecialTokens
+from utils.utils import StreamlitTqdm
+from utils.special_tokens import SpecialTokens
 import altair as alt
 
 import networkx as nx

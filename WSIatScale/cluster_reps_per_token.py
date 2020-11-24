@@ -11,12 +11,11 @@ import numpy as np
 from tqdm import tqdm
 
 from WSIatScale.analyze import read_files
-from WSIatScale.create_inverted_index import full_words_tokens
 from utils.utils import tokenizer_params
 
 from WSIatScale.clustering import MyBOWHierarchicalLinkage
 from WSIatScale.community_detection import CommunityFinder
-from utils.utils import SpecialTokens
+from utils.special_tokens import SpecialTokens
 
 from transformers import AutoTokenizer
 
@@ -25,11 +24,15 @@ MOST_COMMON_CLUSTER_REPS = 100
 WORD_CLUSTERS_DIR = 'word_clusters'
 
 def main(args):
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_params[args.dataset], use_fast=True)
-    tokens_to_index = full_words_tokens(args.dataset, tokenizer)
+    model_hf_path = tokenizer_params[args.dataset]
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
+    special_tokens = SpecialTokens(model_hf_path)
+    tokens_to_index = special_tokens.tokens_to_annotate(model_hf_path)
     already_done = set([int(f.split('_')[0]) for f in os.listdir(out_dir)])
     tokens_to_index -= already_done
-    partial_write_communities_to_disk = partial(write_communities_to_disk, tokenizer=tokenizer, model_hf_path=args.model_hf_path)
+    print(f"{len(tokens_to_index)} tokens to index")
+
+    partial_write_communities_to_disk = partial(write_communities_to_disk, tokenizer=tokenizer, model_hf_path=model_hf_path)
     with Pool(cpu_count()) as p:
         list(tqdm(p.imap(partial_write_communities_to_disk, tokens_to_index), total=len(tokens_to_index)))
 
@@ -45,11 +48,11 @@ def write_communities_to_disk(token, tokenizer, model_hf_path):
     clustering_data_by_n_reps = {'agglomerative_clustering': {}, 'community_detection': {}}
     for n_reps in [5, 20, 50]:
         curr_rep_instances = deepcopy(rep_instances)
-        curr_rep_instances.remove_query_word(tokenizer, token)
+        curr_rep_instances.remove_query_word(tokenizer, tokenizer.decode([token]))
         curr_rep_instances.populate_specific_size(n_reps)
         curr_rep_instances.remove_empty_replacements()
 
-        clustering_data_by_n_reps['agglomerative_clustering'][n_reps] = agglomerative_clustering(curr_rep_instances)
+        # clustering_data_by_n_reps['agglomerative_clustering'][n_reps] = agglomerative_clustering(curr_rep_instances)
         clustering_data_by_n_reps['community_detection'][n_reps] = community_detection_clustering(curr_rep_instances)
     json.dump(clustering_data_by_n_reps, open(os.path.join(args.out_dir, f"{token}_clustering.json"), 'w'))
 
@@ -69,9 +72,9 @@ def agglomerative_clustering(rep_instances):
 
 def community_detection_clustering(rep_instances, query_n_reps=10):
     community_finder = CommunityFinder(rep_instances, query_n_reps)
-    communities = community_finder.find()
+    communities = community_finder.find(resolution=1)
 
-    community_tokens, communities_sents_data = community_finder.argmax_voting(communities, rep_instances)
+    community_tokens, communities_sents_data, _ = community_finder.argmax_voting(communities, rep_instances)
 
     community_tokens = sort_community_tokens_by_popularity(rep_instances, community_tokens)
     clustering_data = []
@@ -109,16 +112,12 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, default="replacements")
     parser.add_argument("--dataset", type=str, choices=['CORD-19', 'Wikipedia-roberta', 'Wikipedia-BERT'])
     args = parser.parse_args()
-    if args.dataset == 'Wikipedia-BERT':
-        args.model_hf_path = 'bert-large-cased-whole-word-masking'
-    else:
-        raise NotImplementedError
 
     out_dir = os.path.join(args.data_dir, WORD_CLUSTERS_DIR)
 
     args.out_dir = out_dir
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    assert len(os.listdir(out_dir)) == 0, f"{out_dir} already exists."
+    # assert len(os.listdir(out_dir)) == 0, f"{out_dir} already exists."
 
     main(args)

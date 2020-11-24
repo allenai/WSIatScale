@@ -11,8 +11,8 @@ from multiprocessing import Pool, cpu_count
 from transformers import AutoTokenizer
 
 from utils.utils import tokenizer_params, jaccard_score_between_elements
+from utils.special_tokens import SpecialTokens
 from WSIatScale.cluster_reps_per_token import read_clustering_data
-from WSIatScale.create_inverted_index import full_words_tokens
 
 from sklearn.feature_extraction import DictVectorizer
 
@@ -23,13 +23,14 @@ CLOSEST_COMMS_DIR = 'closest_communities'
 def main(args):
     model_hf_path = tokenizer_params[args.dataset]
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
-    for method in ['community_detection', 'agglomerative_clustering']:
+    special_tokens = SpecialTokens(model_hf_path)
+    for method in ['community_detection']:#, 'agglomerative_clustering']:
         for n_reps in ['5', '20', '50']:
             outdir = os.path.join(args.data_dir, CLOSEST_COMMS_DIR, f"{method}-{n_reps}")
             if not os.path.exists(outdir):
                 os.makedirs(outdir)
             global ALL_COMMUNITY_TOKENS
-            ALL_COMMUNITY_TOKENS = find_all_community_tokens(tokenizer, args.data_dir, args.dataset, method, n_reps)
+            ALL_COMMUNITY_TOKENS = find_all_community_tokens(tokenizer, special_tokens, args.data_dir, args.dataset, method, n_reps)
             partial_find_and_write = partial(find_and_write, outdir=outdir)
     
             with Pool(cpu_count()) as p:
@@ -59,9 +60,9 @@ def find_closest_communities(target_comm):
     sorted_jaccard_sims.reverse()
     return sorted_jaccard_sims
 
-def find_all_community_tokens(tokenizer, data_dir, dataset, method, n_reps):
+def find_all_community_tokens(tokenizer, special_tokens, data_dir, dataset, method, n_reps):
     # This is a bit wastful. But it's alright atm.
-    tokens_to_index = full_words_tokens(dataset, tokenizer)
+    tokens_to_index = special_tokens.tokens_to_annotate()
     all_community_tokens = {}
     for token in tqdm(tokens_to_index):
         word = tokenizer.decode([token])

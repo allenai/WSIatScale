@@ -14,7 +14,6 @@ MAX_REPS = 100
 
 REPS_DIR = 'replacements'
 INVERTED_INDEX_DIR = 'inverted_index'
-from WSIatScale.create_lemmatized_vocab import LEMMATIZED_VOCAB_FILE
 
 @dataclass
 class Instance:
@@ -24,11 +23,9 @@ class Instance:
     sent: np.array = None
 
 class RepInstances:
-    def __init__(self, lemmatized_vocab_path=None):
+    def __init__(self, lemmatized_vocab=None):
         self.data = []
-        self.lemmatized_vocab_path = lemmatized_vocab_path
-        if self.lemmatized_vocab_path:
-            self.lemmatized_vocab = {int(k): v for k, v in json.load(open(self.lemmatized_vocab_path, 'r')).items()}
+        self.lemmatized_vocab = lemmatized_vocab
 
     def populate(self, paragraph_and_positions, reps, probs, special_tokens, instance_attributes):
         for paragraph, token_pos_in_paragraph, global_token_pos, doc_id in paragraph_and_positions:
@@ -39,7 +36,7 @@ class RepInstances:
                 curr_probs = np.array(probs[global_pos]) if 'probs' in instance_attributes else None
                 curr_reps, curr_probs = self.remove_specific_tokens(special_tokens.half_words_list, curr_reps, curr_probs)
                 curr_reps, curr_probs = self.remove_specific_tokens(special_tokens.stop_words_and_punctuation, curr_reps, curr_probs)
-                if self.lemmatized_vocab_path:
+                if self.lemmatized_vocab:
                     curr_reps, curr_probs = self.lemmatize_reps_and_probs(curr_reps, curr_probs)
                 self.data.append(Instance(doc_id=doc_id,
                                           reps=curr_reps,
@@ -49,11 +46,14 @@ class RepInstances:
     def populate_just_reps(self, token_positions, reps, special_tokens):
         for global_pos in token_positions:
             curr_reps = np.array(reps[global_pos])
-            curr_reps, _ = self.remove_specific_tokens(special_tokens.half_words_list, curr_reps)
-            curr_reps, _ = self.remove_specific_tokens(special_tokens.stop_words_and_punctuation, curr_reps)
-            if self.lemmatized_vocab_path:
-                curr_reps, _ = self.lemmatize_reps_and_probs(curr_reps)
-            self.data.append(Instance(reps=curr_reps))
+            self.clean_and_populate_reps(curr_reps, special_tokens)
+
+    def clean_and_populate_reps(self, reps, special_tokens):
+        reps, _ = self.remove_specific_tokens(special_tokens.half_words_list, reps)
+        reps, _ = self.remove_specific_tokens(special_tokens.stop_words_and_punctuation, reps)
+        if self.lemmatized_vocab:
+            reps, _ = self.lemmatize_reps_and_probs(reps)
+        self.data.append(Instance(reps=reps))
 
     def lemmatize_reps_and_probs(self, curr_reps, curr_probs=None):
         curr_reps = list(map(lambda x: self.lemmatized_vocab[x], curr_reps))
@@ -88,7 +88,6 @@ class RepInstances:
 
         for i in indices_to_remove[::-1]:
             assert len(self.data[i].reps) == 0
-            # print(self.data[i])
             del self.data[i]
 
     def remove_query_word(self, tokenizer, original_word):
@@ -158,8 +157,8 @@ def read_files(token,
     files_to_pos = read_inverted_index(os.path.join(data_dir, inverted_index_dir), token, sample_n_instances)
 
     n_matches = 0
-    lemmatized_vocab_path = os.path.join(data_dir, LEMMATIZED_VOCAB_FILE) if should_lemmatize else None
-    rep_instances = RepInstances(lemmatized_vocab_path)
+    lemmatized_vocab = special_tokens.lemmatized_vocab if should_lemmatize else None
+    rep_instances = RepInstances(lemmatized_vocab)
 
     for file, token_positions in bar(files_to_pos.items()):
         doc_ids = np.load(npy_file_path(data_dir, file, 'doc_ids'), mmap_mode='r')
@@ -180,7 +179,7 @@ def read_files(token,
     return rep_instances, msg
 
 def npy_file_path(data_dir, f, a):
-    return os.path.join(os.path.join(data_dir, REPS_DIR), f"{f}-{a}.npy")
+    return os.path.join(os.path.join(data_dir, '..', REPS_DIR), f"{f}-{a}.npy")
 
 def find_paragraph_and_positions(token_positions, tokens, lengths, doc_ids):
     token_positions = np.array(token_positions)
