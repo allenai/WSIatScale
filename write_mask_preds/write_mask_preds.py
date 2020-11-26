@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 
 import numpy as np
@@ -12,16 +13,18 @@ from transformers.data.data_collator import default_data_collator
 from transformers import AutoTokenizer, BertForMaskedLM, RobertaForMaskedLM
 
 from adaptive_sampler import MaxTokensBatchSampler, data_collator_for_adaptive_sampler
-from data_processors import CORDDataset, WikiDataset, SemEval2010Dataset, SemEval2013Dataset # pylint: disable=import-error
+from data_processors import CORDDataset, WikiDataset, SemEval2010Dataset, SemEval2013Dataset, WiC_TSVDataset # pylint: disable=import-error
 
 REPS_DIR = 'replacements'
 
 TOP_N_WORDS = 100 + 1 #removing identity replacement
 PAD_ID = 0
 dataset_params = {'cord': {'dataset_class': CORDDataset},
-                  'wiki': {'dataset_class': WikiDataset},
-                  'SemEval2010': {'dataset_class': SemEval2010Dataset},
-                  'SemEval2013': {'dataset_class': SemEval2013Dataset}}
+    'wiki': {'dataset_class': WikiDataset},
+    'SemEval2010': {'dataset_class': SemEval2010Dataset}, # Should be write_specific_replacements as well
+    'SemEval2013': {'dataset_class': SemEval2013Dataset}, # Should be write_specific_replacements as well
+    'WiC_TSV': {'dataset_class': WiC_TSVDataset},
+    }
 model_params = {'bert-large-cased-whole-word-masking': {'model_class': BertForMaskedLM, 'model_hf_path': 'bert-large-cased-whole-word-masking'},
     'bert-large-uncased' : {'model_class': BertForMaskedLM, 'model_hf_path': 'bert-large-uncased'},
     'RoBERTa': {'model_class': RobertaForMaskedLM, 'model_hf_path': 'roberta-large'},
@@ -46,7 +49,10 @@ def main(args):
                 normalized = last_hidden_states.softmax(-1)
                 probs, indices = normalized.topk(TOP_N_WORDS)
 
-                write_replacements_to_file(os.path.join(args.out_dir, REPS_DIR, f"{input_file.split('.')[0]}-{i}.npz"), doc_ids, inputs, indices, probs)
+                if args.write_specific_replacements:
+                    write_specific_replacements_to_files(args.out_dir, doc_ids, inputs, indices, probs)
+                else:
+                    write_replacements_to_file(os.path.join(args.out_dir, REPS_DIR, f"{input_file.split('.')[0]}-{i}.npz"), doc_ids, inputs, indices, probs)
             i += 1
 
 def read_files_with_conditions(args):
@@ -104,6 +110,15 @@ def simple_dataloader(args, dataset):
     )
     return dataloader
 
+def write_specific_replacements_to_files(out_dir, doc_ids, inputs, replacements, probs):
+    instance_id_to_target_pos = json.load(open(os.path.join(out_dir, "instance_id_to_target_pos.json"), 'r'))
+    for doc_id, reps in zip(doc_ids, replacements):
+        relevant_index = instance_id_to_target_pos[str(doc_id.item())]
+        relevant_reps = reps[relevant_index][:TOP_N_WORDS-1]
+
+        outfile = os.path.join(out_dir, REPS_DIR, f"{doc_id}-reps.npy")
+        np.save(outfile, relevant_reps.cpu().numpy().astype(np.uint16))
+
 def write_replacements_to_file(outfile, doc_ids, inputs, replacements, probs):
     attention_mask = inputs['attention_mask'].bool()
 
@@ -138,7 +153,7 @@ if __name__ == "__main__":
     parser.add_argument("--starts_with", type=str)
     parser.add_argument("--files_range", type=str, help="should be splited with `-`")
     parser.add_argument("--out_dir", type=str, default="replacements")
-    parser.add_argument("--dataset", type=str, required=True, choices=['cord', 'wiki', 'SemEval2010', 'SemEval2013'])
+    parser.add_argument("--dataset", type=str, required=True, choices=['cord', 'wiki', 'SemEval2010', 'SemEval2013', 'WiC_TSV'])
     parser.add_argument("--model", type=str, required=True, choices=['bert-large-cased-whole-word-masking', 'bert-large-uncased', 'RoBERTa', 'scibert'])
     parser.add_argument("--local_rank", type=int, default=-1, help="Not Maintained")
     parser.add_argument("--batch_size", type=int, default=1)
@@ -148,6 +163,7 @@ if __name__ == "__main__":
     parser.add_argument("--overwrite_cache", action="store_true")
     parser.add_argument("--simple_sampler", action="store_true")
     parser.add_argument("--cpu", action="store_true")
+    parser.add_argument("--write_specific_replacements", action="store_true")
     parser.add_argument("--fp16", action="store_true")
 
     args = parser.parse_args()
