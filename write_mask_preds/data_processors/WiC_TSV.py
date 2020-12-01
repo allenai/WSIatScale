@@ -28,37 +28,19 @@ class WiC_TSVDataset(Dataset):
         cache_dir: Optional[str] = None,
     ):
         self.processor = WiC_TSVProcessor()
-        cached_features_file = os.path.join(
-            cache_dir if cache_dir is not None else args.data_dir,
-            "cached_{}_{}_{}_{}".format(
-                tokenizer.__class__.__name__, str(args.max_seq_length), str(args.simple_sampler), input_file
-            ),
+
+        logger.info(f"Creating features from dataset file at {args.data_dir}")
+
+        examples = list(self.processor.get_examples(args.data_dir, input_file, tokenizer))
+        if limit_length is not None:
+            examples = examples[:limit_length]
+        self.features, instance_id_to_target_pos = convert_examples_to_features(
+            examples,
+            tokenizer,
+            max_length=args.max_seq_length,
+            padding_strategy="max_length" if args.simple_sampler else "do_not_pad"
         )
-
-        if False and os.path.exists(cached_features_file) and not args.overwrite_cache: #REMOVE
-            start = time.time()
-            self.features = torch.load(cached_features_file)
-            logger.info(
-                f"Loading features from cached file {cached_features_file} [took %.3f s]", time.time() - start
-            )
-        else:
-            logger.info(f"Creating features from dataset file at {args.data_dir}")
-
-            examples = list(self.processor.get_examples(args.data_dir, input_file, tokenizer))
-            if limit_length is not None:
-                examples = examples[:limit_length]
-            self.features, instance_id_to_target_pos = convert_examples_to_features(
-                examples,
-                tokenizer,
-                max_length=args.max_seq_length,
-                padding_strategy="max_length" if args.simple_sampler else "do_not_pad"
-            )
-            start = time.time()
-            torch.save(self.features, cached_features_file)
-            json.dump(instance_id_to_target_pos, open(os.path.join(args.out_dir, "instance_id_to_target_pos.json"), 'w'))
-            logger.info(
-                "Saving features into cached file %s [took %.3f s]", cached_features_file, time.time() - start
-            )
+        json.dump(instance_id_to_target_pos, open(os.path.join(args.out_dir, "instance_id_to_target_pos.json"), 'w'))
 
     def __len__(self):
         return len(self.features)
@@ -82,11 +64,13 @@ class WiC_TSVProcessor(DataProcessor):
     def _create_examples(self, tokenizer, lines):
         examples = []
         for i, line in enumerate(lines):
-            target_word, pos, text = line
+            _, pos, text = line
             pos = int(pos)
             splited_text = text.split()
             # assert splited_text[pos] == target_word #This is not the case for plurals
             before_target = ' '.join(splited_text[:pos])
+            # len_target_word = len(tokenizer.encode(target_word, add_special_tokens=False))
+            # target_position = [x + (len(tokenizer.encode(before_target)) - 1) for x in range(len_target_word)]
             target_position = len(tokenizer.encode(before_target)) - 1
             examples.append(WiC_TSV_InputExample(guid=i, text_a=text, target_pos=target_position))
         return examples

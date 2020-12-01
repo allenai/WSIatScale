@@ -1,3 +1,4 @@
+ # pylint: disable=import-error
 import argparse
 import json
 import os
@@ -13,7 +14,7 @@ from transformers.data.data_collator import default_data_collator
 from transformers import AutoTokenizer, BertForMaskedLM, RobertaForMaskedLM
 
 from adaptive_sampler import MaxTokensBatchSampler, data_collator_for_adaptive_sampler
-from data_processors import CORDDataset, WikiDataset, SemEval2010Dataset, SemEval2013Dataset, WiC_TSVDataset # pylint: disable=import-error
+from data_processors import CORDDataset, WikiDataset, SemEval2010Dataset, SemEval2013Dataset, WiC_TSVDataset
 
 REPS_DIR = 'replacements'
 
