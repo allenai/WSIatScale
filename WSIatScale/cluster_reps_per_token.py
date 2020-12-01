@@ -21,13 +21,14 @@ from transformers import AutoTokenizer
 
 SAMPLE_N_INSTANCES = 1000
 MOST_COMMON_CLUSTER_REPS = 100
-WORD_CLUSTERS_DIR = 'word_clusters'
+WORD_CLUSTERS_DIR = 'word_clusters_resolution1.2' #TODO pick
+# WORD_CLUSTERS_DIR = 'word_clusters'
 
 def main(args):
     model_hf_path = tokenizer_params[args.dataset]
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
     special_tokens = SpecialTokens(model_hf_path)
-    tokens_to_index = special_tokens.tokens_to_annotate(model_hf_path)
+    tokens_to_index = special_tokens.tokens_to_annotate()
     already_done = set([int(f.split('_')[0]) for f in os.listdir(out_dir)])
     tokens_to_index -= already_done
     print(f"{len(tokens_to_index)} tokens to index")
@@ -72,7 +73,7 @@ def agglomerative_clustering(rep_instances):
 
 def community_detection_clustering(rep_instances, query_n_reps=10):
     community_finder = CommunityFinder(rep_instances, query_n_reps)
-    communities = community_finder.find(resolution=1)
+    communities = community_finder.find(resolution=1.)
 
     community_tokens, communities_sents_data, _ = community_finder.argmax_voting(communities, rep_instances)
 
