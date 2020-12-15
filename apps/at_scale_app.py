@@ -30,14 +30,14 @@ def cached_read_clustering_data_of_word(tokenizer, data_dir, word):
     token = tokenize(tokenizer, word)
     return read_clustering_data(data_dir, token)
 
-EXTERNAL_IP = get('https://api.ipify.org').text
+EXTERNAL_IP = '34.90.253.209'
 
 def main():
     app_state = st.experimental_get_query_params()
     app_state = {k: v[0] if isinstance(v, list) else v for k, v in app_state.items()}
 
     st.title('WSI at Scale')
-    single_word_app = ['WSI at Scale', 'List Expansion']
+    single_word_app = ['WSI at Scale', 'List Expansion', 'Explore Senseful w2v']
     non_single_word_app = ['IE by Sense', 'Infer Senses by List']
     app_str = st.sidebar.radio(
         "Choose Application", single_word_app + non_single_word_app, app_index(app_str_format_func(app_state.get('app')))
@@ -52,7 +52,8 @@ def main():
     tokenizer = cached_tokenizer(model_hf_path)
 
     if app_str in single_word_app:
-        word = st.sidebar.text_input('Word to disambiguate', app_state.get('word') or example_word)
+        word = st.sidebar.text_input('Word to disambiguate', example_word or app_state.get('word'))
+        print(word)
         if word != app_state.get("word"):
             app_state["word"] = word
             st.experimental_set_query_params(**app_state)
@@ -60,7 +61,7 @@ def main():
     method = method_format_func(st.sidebar.selectbox('Method', ('Agglomerative Clustering', 'Community Detection'), 1))
     n_reps = st.sidebar.select_slider(f"Number of replacements", options=[5, 20, 50])
 
-    if app_str != 'List Expansion':
+    if app_str in ['WSI at Scale', 'IE by Sense', 'Infer Senses by List']:
         num_sent_to_print = st.sidebar.slider(f"Number of cluster sentences to present", 1, 100, 3)
 
     if app_str == 'WSI at Scale':
@@ -73,6 +74,27 @@ def main():
     elif app_str == 'Infer Senses by List':
         cluster_reps_to_use = st.sidebar.slider(f"Number of cluster replacements to use", 1, 100, 10)
         print_infer_senses_by_list(tokenizer, data_dir, method, n_reps, cluster_reps_to_use)
+    elif app_str == 'Explore Senseful w2v':
+        explore_senseful_w2v(word)
+
+def explore_senseful_w2v(word):
+    from gensim.models import KeyedVectors
+    topn_closest = st.sidebar.slider(f"Top n closest word embeddings", 1, 100, 10)
+
+    emb_model = st.radio(
+        "Embeddings model", ['senseful_w2v.word_vectors', 'senseful_w2v.word_vectors-10epochs', 'senseful_w2v.word_vectors-10epochs-300dim'], 1)
+    word_vectors = KeyedVectors.load(f"senseful_w2v/word_vectors/{emb_model}", mmap='r')
+    word_senses = [k for k in word_vectors.key_to_index if k.startswith(f"{word}_")]
+    word_senses = sorted(word_senses)
+    if word in word_vectors.key_to_index:
+        word_senses.append(word)
+    if not word_senses:
+        st.write(f"{word} no in vocabulary")
+        return
+    for word_sense in word_senses:
+        if st.checkbox(word_sense, value=True):
+            for key, dist in word_vectors.similar_by_word(word_sense, topn=topn_closest):
+                st.write(f"{key}: {dist}")
 
 def print_infer_senses_by_list(tokenizer, data_dir, method, n_reps, cluster_reps_to_use):
     words = st.text_input("Word Senses to infer, comma seperated.", "bass, grunt, bleak, salmon")
@@ -267,7 +289,7 @@ def dataset_configs(dataset):
     if dataset == 'Wikipedia':
         model_hf_path = 'bert-large-cased-whole-word-masking'
         data_dir = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2'
-        example_word = 'bass'
+        example_word = 'bug'
         special_tokens = SpecialTokens(model_hf_path)
     else:
         raise NotImplementedError
@@ -290,6 +312,8 @@ def app_str_format_func(app_str):
         return 'senseie'
     elif app_str == 'Infer Senses by List':
         return 'seninfer'
+    elif app_str == 'Explore Senseful w2v':
+        return 'senseful_w2v'
     else:
         return app_str
 
@@ -298,10 +322,12 @@ def app_index(app_str):
         return 0
     if app_str == 'lstexp':
         return 1
-    if app_str == 'senseie':
+    if app_str == 'senseful_w2v':
         return 2
-    if app_str == 'seninfer':
+    if app_str == 'senseie':
         return 3
+    if app_str == 'seninfer':
+        return 4
 
 if __name__ == "__main__":
     main()
