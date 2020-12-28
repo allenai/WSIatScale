@@ -196,8 +196,10 @@ def label(args, data_dir, voting_method):
     else:
         labeling_alg = community_detection_labelling
     instance_id_to_doc_id = json.load(open(os.path.join(data_dir, "instance_id_to_doc_id.json"), 'r'))
-    # lemmas = sorted(set(['.'.join(k.split('.', 2)[:2]) for k in instance_id_to_doc_id.keys()]))
-    lemmas = set([k.split('.')[0] for k in instance_id_to_doc_id.keys()])
+    if args.data_dir2010 is not None:
+        lemmas = set([k.split('.')[0] for k in instance_id_to_doc_id.keys()])
+    else:
+        lemmas = sorted(set(['.'.join(k.split('.', 2)[:2]) for k in instance_id_to_doc_id.keys()]))
 
     return labeling_alg(args,
         data_dir,

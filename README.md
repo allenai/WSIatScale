@@ -6,7 +6,7 @@
 This script needs to to be ran from inside the `write_mask_preds` folder, to be consistent with running using the Dockerfile on Beaker.
 
 ```
-python write_mask_preds.py --data_dir ../../datasets/wiki-ann/wiki-ann/ --starts_with wiki --out_dir ../../datasets/processed_for_WSI/wiki/wiki000/replacements --dataset wiki --max_tokens_per_batch 16384 --fp16 --files_range 100-109
+python write_mask_preds.py --data_dir ../../datasets/wiki-ann/wiki-ann/ --starts_with wiki --out_dir ../../datasets/processed_for_WSI/wiki/wiki000/replacements --dataset wiki --max_tokens_per_batch 16384 --fp16 --files_range 100-109 --model bert-large-cased-whole-word-masking
 ```
 
 `max_tokens_per_batch=16384` is the max power of 2 that fits in a single P-100 GPU.
