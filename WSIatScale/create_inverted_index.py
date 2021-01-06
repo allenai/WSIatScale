@@ -71,7 +71,7 @@ def index(which_files, special_tokens, tokens_to_index, replacements_dir, outdir
             f.write(json.dumps(positions)+'\n')
 
 def full_word(special_tokens, file_tokens, pos, dataset):
-    if dataset == 'allenai/scibert_scivocab_uncased' or dataset == 'Wikipedia-BERT':
+    if dataset == 'CORD-19' or dataset == 'Wikipedia-BERT':
         if pos + 1 == len(file_tokens):
             return True
         if file_tokens[pos + 1] in special_tokens.half_words_list:

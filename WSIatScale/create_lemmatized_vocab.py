@@ -8,7 +8,7 @@ from transformers import AutoTokenizer
 
 def create_lemmatized_vocab(outdir, model):
     lemmatized_vocab = prepare_lemmatized_vocab(model)
-    outfile = os.path.join(outdir, f"lemmatized_vocabs-{model}.json")
+    outfile = os.path.join(outdir, f"lemmatized_vocabs-{model.replace('/', '_')}.json")
     json.dump(lemmatized_vocab, open(outfile, 'w'))
 
 def prepare_lemmatized_vocab(model):
@@ -51,7 +51,7 @@ def lemmatize_with_exceptions(nlp, tokenizer, vocab, index, word):
     elif word in should_singalize_with_caps:
         return word[:-1]
 
-    if word in ['cannot', 'gotta']: #not good enough lemmatizing.
+    if word in ['cannot', 'gotta', '']: #not good enough lemmatizing.
         ret = word
     else:
         spacy_token = nlp(word)[0]
@@ -75,6 +75,6 @@ def lemmatize_with_exceptions(nlp, tokenizer, vocab, index, word):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--outdir", type=str, required=True)
-    parser.add_argument("--model", type=str, choices=['bert-large-uncased', 'bert-large-cased-whole-word-masking'])
+    parser.add_argument("--model", type=str, choices=['bert-large-uncased', 'bert-large-cased-whole-word-masking', 'allenai/scibert_scivocab_uncased'])
     args = parser.parse_args()
     create_lemmatized_vocab(args.outdir, args.model)

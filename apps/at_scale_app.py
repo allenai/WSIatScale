@@ -19,6 +19,7 @@ from WSIatScale.assign_clusters_to_tokens import SENTS_BY_CLUSTER
 from WSIatScale.look_for_similar_communities import read_close_communities
 from WSIatScale.word_sense_linking import infer_senses_by_list
 from utils.special_tokens import SpecialTokens
+from gensim.models import KeyedVectors
 
 @st.cache(hash_funcs={tokenizers.Tokenizer: id}, suppress_st_warning=True, allow_output_mutation=True)
 def cached_tokenizer(model_hf_path):
@@ -37,6 +38,10 @@ def main():
     app_state = {k: v[0] if isinstance(v, list) else v for k, v in app_state.items()}
 
     st.title('WSI at Scale')
+
+    dataset = st.sidebar.radio(
+        "Dataset", ['Wikipedia', 'CORD-19'], 0
+        )
     single_word_app = ['WSI at Scale', 'List Expansion', 'Explore Senseful w2v']
     non_single_word_app = ['IE by Sense', 'Infer Senses by List']
     app_str = st.sidebar.radio(
@@ -47,12 +52,11 @@ def main():
         app_state["app"] = app_str_format_func(app_str)
         st.experimental_set_query_params(**app_state)
 
-    dataset = 'Wikipedia'
     model_hf_path, data_dir, example_word, special_tokens = dataset_configs(dataset)
     tokenizer = cached_tokenizer(model_hf_path)
 
     if app_str in single_word_app:
-        word = st.sidebar.text_input('Word to disambiguate', example_word or app_state.get('word'))
+        word = st.sidebar.text_input('Word to disambiguate', app_state.get('word') or example_word)
         print(word)
         if word != app_state.get("word"):
             app_state["word"] = word
@@ -75,21 +79,23 @@ def main():
         cluster_reps_to_use = st.sidebar.slider(f"Number of cluster replacements to use", 1, 100, 10)
         print_infer_senses_by_list(tokenizer, data_dir, method, n_reps, cluster_reps_to_use)
     elif app_str == 'Explore Senseful w2v':
-        explore_senseful_w2v(word)
+        explore_senseful_w2v(dataset, word)
 
-def explore_senseful_w2v(word):
-    from gensim.models import KeyedVectors
+def explore_senseful_w2v(dataset, word):
     topn_closest = st.sidebar.slider(f"Top n closest word embeddings", 1, 100, 10)
 
-    emb_model = st.radio(
-        "Embeddings model", ['senseful_w2v.word_vectors', 'senseful_w2v.word_vectors-10epochs', 'senseful_w2v.word_vectors-10epochs-300dim'], 1)
-    word_vectors = KeyedVectors.load(f"senseful_w2v/word_vectors/{emb_model}", mmap='r')
+    if dataset == 'Wikipedia':
+        emb_model = st.radio(
+            "Embeddings model", ['senseful_w2v.word_vectors', 'senseful_w2v.word_vectors-10epochs', 'senseful_w2v.word_vectors-10epochs-300dim'], 1)
+    elif dataset == 'CORD-19':
+        emb_model = 'senseful_w2v.word_vectors-10epochs-100dim-CBOW'
+    word_vectors = KeyedVectors.load(f"senseful_w2v/word_vectors/{dataset}/{emb_model}", mmap='r')
     word_senses = [k for k in word_vectors.key_to_index if k.startswith(f"{word}_")]
     word_senses = sorted(word_senses)
     if word in word_vectors.key_to_index:
         word_senses.append(word)
     if not word_senses:
-        st.write(f"{word} no in vocabulary")
+        st.write(f"{word} not in vocabulary")
         return
     for word_sense in word_senses:
         if st.checkbox(word_sense, value=True):
@@ -290,9 +296,13 @@ def dataset_configs(dataset):
         model_hf_path = 'bert-large-cased-whole-word-masking'
         data_dir = '/mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2'
         example_word = 'bug'
-        special_tokens = SpecialTokens(model_hf_path)
+    elif dataset == 'CORD-19':
+        model_hf_path = 'allenai/scibert_scivocab_uncased'
+        data_dir = '/mnt/disks/mnt1/datasets/CORD-19/scibert'
+        example_word = 'race'
     else:
         raise NotImplementedError
+    special_tokens = SpecialTokens(model_hf_path)
     return model_hf_path, data_dir, example_word, special_tokens
 
 def method_format_func(method_str):

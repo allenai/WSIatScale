@@ -22,9 +22,14 @@ ALIGNED_SENSE_IDX_FOLDER = 'aligned_sense_idx'
 TOP_REPS_TO_LOOK_ON = 10
 
 def main(args):
+    # THIS DOESN'T REQUIRE TO STORE THE SAME DATA IN TWO DIFFERET
+    # STYLES LIKE I'M DOING, SHOULD BE CHANGED.
     model_hf_path = tokenizer_params[args.dataset]
     special_tokens = SpecialTokens(model_hf_path)
-    replacements_dir = os.path.join(args.data_dir, '..', REPS_DIR)
+    if 'wiki' in args.data_dir: #HACK
+        replacements_dir = os.path.join(args.data_dir, '..', REPS_DIR)
+    else:
+        replacements_dir = os.path.join(args.data_dir, REPS_DIR)
 
     files = data_files(replacements_dir)
     print(f"total {len(files)} files.")

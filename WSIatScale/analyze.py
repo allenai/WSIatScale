@@ -56,7 +56,7 @@ class RepInstances:
         self.data.append(Instance(reps=reps))
 
     def lemmatize_reps_and_probs(self, curr_reps, curr_probs=None):
-        curr_reps = list(map(lambda x: self.lemmatized_vocab[x], curr_reps))
+        curr_reps = list(map(lambda x: self.lemmatized_vocab.get(x, x), curr_reps))
         new_reps = []
         seen_lemmas = set()
         element_indices_to_delete = []
@@ -179,7 +179,9 @@ def read_files(token,
     return rep_instances, msg
 
 def npy_file_path(data_dir, f, a):
-    return os.path.join(os.path.join(data_dir, '..', REPS_DIR), f"{f}-{a}.npy")
+    if 'wiki' in data_dir: #HACK
+        return os.path.join(os.path.join(data_dir, '..', REPS_DIR), f"{f}-{a}.npy")
+    return os.path.join(os.path.join(data_dir, REPS_DIR), f"{f}-{a}.npy")
 
 def find_paragraph_and_positions(token_positions, tokens, lengths, doc_ids):
     token_positions = np.array(token_positions)

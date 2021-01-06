@@ -12,18 +12,26 @@ from gensim.models import Word2Vec
 from transformers import AutoTokenizer
 from tqdm import tqdm
 
+from utils.utils import tokenizer_params
+
 def main(args):
-    model_hf_path = 'bert-large-cased-whole-word-masking'
+    model_hf_path = tokenizer_params[args.dataset]
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
     special_tokens = SpecialTokens(model_hf_path)
 
-    wiki_iter = WikipediaIterator(args.data_dir, tokenizer, special_tokens, args.processed_sents_cache_dir)
+    if args.dataset == 'Wikipedia':
+        iter = WikipediaIterator(args.data_dir, tokenizer, special_tokens, args.processed_sents_cache_dir)
+    elif args.dataset == 'CORD-19':
+        iter = CORDIterator(args.data_dir, tokenizer, special_tokens, args.processed_sents_cache_dir)
+    else:
+        raise NotImplementedError
+
 
     sg = 0
     if args.alg == 'SG':
         sg = 1
 
-    model = Word2Vec(sentences=wiki_iter,
+    model = Word2Vec(sentences=iter,
                      vector_size=args.dims,
                      window=5,
                      min_count=5,
@@ -32,16 +40,16 @@ def main(args):
                      epochs=args.epochs)
 
     word_vectors = model.wv
-    word_vectors.save(f"senseful_w2v/word_vectors/senseful_w2v.word_vectors-{args.epochs}epochs-{args.dims}dim-{args.alg}")
+    word_vectors.save(f"senseful_w2v/word_vectors/{args.dataset}/senseful_w2v.word_vectors-{args.epochs}epochs-{args.dims}dim-{args.alg}")
 
-class WikipediaIterator:
+class DatasetIterator:
     def __init__(self, data_dir, tokenizer, special_tokens, processed_sents_cache_dir):
         self.data_dir = data_dir
         self.tokenizer = tokenizer
         self.special_tokens = special_tokens
         self.processed_sents_cache_dir = processed_sents_cache_dir
 
-        self.filenames = [f.name.split('-tokens.npy')[0] for f in (self.data_dir/'..'/'replacements').iterdir() if 'tokens' in f.name]
+        self.filenames = [f.name.split('-tokens.npy')[0] for f in self.replacements_dir().iterdir() if 'tokens' in f.name]
         for filename in self.filenames:
             assert self.senses_file(filename).exists()
 
@@ -88,17 +96,29 @@ class WikipediaIterator:
                     else:
                         sent.append(wordpiece)
 
-    def tokens_file(self, f):
-        return self.data_dir/'..'/'replacements'/f"{f}-tokens.npy"
-
     def senses_file(self, f):
         return self.data_dir/'aligned_sense_idx'/f"{f}.npy"
+
+    def tokens_file(self, f):
+        return self.replacements_dir()/f"{f}-tokens.npy"
+
+    def replacements_dir(self):
+        raise NotImplementedError
+
+class WikipediaIterator(DatasetIterator):
+    def replacements_dir(self):
+        return self.data_dir/'..'/'replacements'
+
+class CORDIterator(DatasetIterator):
+    def replacements_dir(self):
+        return self.data_dir/'replacements'
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=Path, required=True)
     parser.add_argument("--processed_sents_cache_dir", type=Path, required=True)
-    # /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2/aligned_sense_idx/processed_sents
+    # {data_dir}/aligned_sense_idx/processed_sents
+    parser.add_argument("--dataset", choices=['Wikipedia-BERT', 'CORD-19'], required=True)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--dims", type=int, default=100)
     parser.add_argument("--alg", type=str, choices=['CBOW', 'SG'], default='CBOW')

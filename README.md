@@ -54,12 +54,23 @@ Now you can start viewing results in `at_scale_app.py`
 
 We want to find all instances of words by cluster (~8:30 hours with 96 cpu cores):
 ```
-python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2 --dataset Wikipedia-BERT
+python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2 --dataset Wikipedia-BERT --write_index_by_word  --run_specific_method community_detection --run_specific_n_reps 5
 ```
 
 Finaly, we can find for each community its closest communities: (per method, n_reps ~2 minutes. so max ~12 minutes.)
 ```
 python -m WSIatScale.look_for_similar_communities --data_dir /mnt/disks/mnt2/datasets/processed_for_WSI/wiki/bert/v2 --dataset Wikipedia-BERT
+```
+
+Or for CORD-19:
+```
+python -m WSIatScale.create_inverted_index --replacements_dir /mnt/disks/mnt1/datasets/CORD-19/scibert/replacements --outdir /mnt/disks/mnt1/datasets/CORD-19/scibert/inverted_index/ --dataset CORD-19
+
+python -m WSIatScale.cluster_reps_per_token --data_dir /mnt/disks/mnt1/datasets/CORD-19/scibert --dataset CORD-19 > cord_cluster_reps_per_token.log 2>&1 &
+
+python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt1/datasets/CORD-19/scibert --dataset CORD-19 --write_index_by_word  --run_specific_method community_detection --run_specific_n_reps 5 > cord_assign_clusters_to_tokens.log 2>&1 &
+
+python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt1/datasets/CORD-19/scibert --dataset CORD-19 --write_aligned_sense_idx --run_specific_method community_detection --run_specific_n_reps 5
 ```
 
 

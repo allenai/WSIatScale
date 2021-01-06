@@ -1,14 +1,12 @@
 import argparse
-from itertools import product, combinations
+import json
+from itertools import product
 from pathlib import Path
 from gensim.models import KeyedVectors
-from gensim import matutils
 from tqdm import tqdm
-import multiprocessing
-from multiprocessing import Pool, cpu_count, Manager
 
 import numpy as np
-from numpy import float32, vstack, dot
+from numpy import dot
 N_INLIERS = 8
 N_OUTLIERS = 8
 
@@ -19,6 +17,8 @@ def main(args):
 
     if 'sense' in args.model_path.name:
         scorer = SensefulW2VSimilarityScorer(args.model_path)
+    elif 'nasari' in args.model_path.name:
+        scorer = NASARISimilarityScorer(args.model_path)
     else:
         scorer = W2VSimilarityScorer(args.model_path)
     print(f"Done initlizing scorer")
@@ -31,7 +31,6 @@ class SimilarityScorer:
     def __init__(self, model_path):
         self.embs = KeyedVectors.load(str(model_path), mmap='r')
         self.opp = []
-        self.cached_similarities = None
 
     def score(self, dataset):
         for _, ex in tqdm(dataset.items()):
@@ -55,9 +54,6 @@ class SimilarityScorer:
             #     print("Positions:", sorted_candidates)
             #     print()
 
-    def similarity(self, w_i, w_j):
-        return dot(self.get_vector_with_fallback(w_i, True), self.get_vector_with_fallback(w_j, True))
-
     def inv_candidates_compactness_scores(self, candidates):
         compactness_scores = []
         for i in range(len(candidates)):
@@ -72,6 +68,9 @@ class SimilarityScorer:
     def inv_compactness_score(self, word, W):
         raise NotImplementedError
 
+    def similarity(self, w_i, w_j):
+        return dot(self.get_vector_with_fallback(w_i, True), self.get_vector_with_fallback(w_j, True))
+
     def get_vector_with_fallback(self, key, norm):
         if key in self.embs:
             return self.embs.get_vector(key, norm=norm)
@@ -83,7 +82,21 @@ class W2VSimilarityScorer(SimilarityScorer):
         super(W2VSimilarityScorer, self).__init__(model_path)
 
     def inv_compactness_score(self, word, W_minus_w):
-        return sum([self.similarity(word, w_tag) for w_tag in W_minus_w])
+        # return sum([self.similarity(word, w_tag) for w_tag in W_minus_w])
+        def all_cases(w):
+            return [w, w.title()]
+
+        return sum(
+            [
+            max(
+                [self.similarity(word_case, w_tag_case)
+                    for word_case, w_tag_case in product(all_cases(word), all_cases(w_tag))
+                    if word_case in self.embs and w_tag_case in self.embs
+                ] + [-1]
+            )
+            for w_tag in W_minus_w
+            ]
+        )
 
 class SensefulW2VSimilarityScorer(SimilarityScorer):
     def __init__(self, model_path):
@@ -110,6 +123,23 @@ class SensefulW2VSimilarityScorer(SimilarityScorer):
         candidates = [*all_senses(word), *all_senses(word.title()), *all_senses(word.upper())]
         ret = [c for c in candidates if c in self.embs.key_to_index]
         return ret
+
+class NASARISimilarityScorer(SensefulW2VSimilarityScorer):
+    def __init__(self, model_path):
+        self.embs = json.load(open(model_path, 'r'))
+        self.ids_to_word = {id: word for word in self.embs for id in self.embs[word]}
+        self.opp = []
+
+    def word_senses(self, word):
+        return {k: self.embs[word][k]['full_lemma'] for k in self.embs[word]}
+        # return [key for key in self.embs[word] if self.embs[word][key]['source'] == 'WN']
+
+    def get_vector_with_fallback(self, key, norm):
+        word = self.ids_to_word[key]
+        vec = np.array(self.embs[word][key]['embs'])
+        if norm:
+            vec /= np.linalg.norm(vec)
+        return vec
 
 def read_dataset(args):
     ret = {}
