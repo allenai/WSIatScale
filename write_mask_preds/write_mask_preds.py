@@ -14,7 +14,7 @@ from transformers.data.data_collator import default_data_collator
 from transformers import AutoTokenizer, BertForMaskedLM, RobertaForMaskedLM
 
 from adaptive_sampler import MaxTokensBatchSampler, data_collator_for_adaptive_sampler
-from data_processors import CORDDataset, WikiDataset, SemEval2010Dataset, SemEval2013Dataset, WiC_TSVDataset
+from data_processors import CORDDataset, WikiDataset, SemEval2010Dataset, SemEval2013Dataset
 
 REPS_DIR = 'replacements'
 
@@ -24,7 +24,6 @@ dataset_params = {'cord': {'dataset_class': CORDDataset},
     'wiki': {'dataset_class': WikiDataset},
     'SemEval2010': {'dataset_class': SemEval2010Dataset}, # Should be write_specific_replacements as well
     'SemEval2013': {'dataset_class': SemEval2013Dataset}, # Should be write_specific_replacements as well
-    'WiC_TSV': {'dataset_class': WiC_TSVDataset},
     }
 model_params = {'bert-large-cased-whole-word-masking': {'model_class': BertForMaskedLM, 'model_hf_path': 'bert-large-cased-whole-word-masking'},
     'bert-large-uncased' : {'model_class': BertForMaskedLM, 'model_hf_path': 'bert-large-uncased'},
@@ -154,7 +153,7 @@ if __name__ == "__main__":
     parser.add_argument("--starts_with", type=str)
     parser.add_argument("--files_range", type=str, help="should be splited with `-`")
     parser.add_argument("--out_dir", type=str, default="replacements")
-    parser.add_argument("--dataset", type=str, required=True, choices=['cord', 'wiki', 'SemEval2010', 'SemEval2013', 'WiC_TSV'])
+    parser.add_argument("--dataset", type=str, required=True, choices=['cord', 'wiki', 'SemEval2010', 'SemEval2013'])
     parser.add_argument("--model", type=str, required=True, choices=['bert-large-cased-whole-word-masking', 'bert-large-uncased', 'RoBERTa', 'scibert'])
     parser.add_argument("--local_rank", type=int, default=-1, help="Not Maintained")
     parser.add_argument("--batch_size", type=int, default=1)
