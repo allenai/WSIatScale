@@ -9,9 +9,12 @@ import numpy as np
 from numpy import dot
 from gensim.models import KeyedVectors
 
-STOPWORDS = {'ourselves', 'hers', 'between', 'Between', 'yourself', 'Yourself', 'but', 'But', 'again', 'Again', 'there', 'There', 'about', 'About', 'once', 'Once', 'during', 'During', 'very', 'Very', 'having', 'Having', 'with', 'With', 'they', 'They', 'own', 'Own', 'an', 'An', 'be', 'Be', 'some', 'Some', 'for', 'For', 'do', 'Do', 'its', 'Its', 'yours', 'Yours', 'such', 'Such', 'into', 'Into', 'of', 'Of', 'most', 'Most', 'itself', 'other', 'Other', 'off', 'Off', 'is', 'Is', 'am', 'Am', 'or', 'Or', 'who', 'Who', 'as', 'As', 'from', 'From', 'him', 'Him', 'each', 'Each', 'the', 'The', 'themselves', 'until', 'Until', 'below', 'Below', 'are', 'Are', 'we', 'We', 'these', 'These', 'your', 'Your', 'his', 'His', 'through', 'Through', 'don', 'Don', 'nor', 'Nor', 'me', 'Me', 'were', 'Were', 'her', 'Her', 'more', 'More', 'himself', 'Himself', 'this', 'This', 'down', 'Down', 'should', 'Should', 'our', 'Our', 'their', 'Their', 'while', 'While', 'above', 'Above', 'both', 'Both', 'up', 'Up', 'to', 'To', 'ours', 'had', 'Had', 'she', 'She', 'all', 'All', 'no', 'No', 'when', 'When', 'at', 'At', 'any', 'Any', 'before', 'Before', 'them', 'Them', 'same', 'Same', 'and', 'And', 'been', 'Been', 'have', 'Have', 'in', 'In', 'will', 'Will', 'on', 'On', 'does', 'Does', 'then', 'Then', 'that', 'That', 'because', 'Because', 'what', 'What', 'over', 'Over', 'why', 'Why', 'so', 'So', 'did', 'Did', 'not', 'Not', 'now', 'Now', 'under', 'Under', 'he', 'He', 'you', 'You', 'herself', 'has', 'Has', 'just', 'Just', 'where', 'Where', 'too', 'Too', 'only', 'Only', 'myself', 'which', 'Which', 'those', 'Those', 'after', 'After', 'few', 'Few', 'whom', 'being', 'Being', 'if', 'If', 'theirs', 'my', 'My', 'against', 'Against', 'by', 'By', 'doing', 'Doing', 'it', 'It', 'how', 'How', 'further', 'Further', 'was', 'Was', 'here', 'Here', 'than', 'Than'}
+STOPWORDS = {'ourselves', 'hers', 'between', 'Between', 'yourself', 'Yourself', 'but', 'But', 'again', 'Again', 'there', 'There', 'about', 'About', 'once', 'Once', 'during', 'During', 'very', 'Very', 'having', 'Having', 'with', 'With', 'they', 'They', 'own', 'Own', 'an', 'An', 'be', 'Be', 'some', 'Some', 'for', 'For', 'do', 'Do', 'its', 'Its', 'yours', 'Yours', 'such', 'Such', 'into', 'Into', 'of', 'Of', 'most', 'Most', 'itself', 'other', 'Other', 'off', 'Off', 'is', 'Is', 'am', 'Am', 'or', 'Or', 'who', 'Who', 'as', 'As', 'from', 'From', 'him', 'Him', 'each', 'Each', 'the', 'The', 'themselves', 'until', 'Until', 'below', 'Below', 'are', 'Are', 'we', 'We', 'these', 'These', 'your', 'Your', 'his', 'His', 'through', 'Through', 'don', 'Don', 'nor', 'Nor', 'me', 'Me', 'were', 'Were', 'her', 'Her', 'more', 'More', 'himself', 'Himself', 'this', 'This', 'down', 'Down', 'should', 'Should', 'our', 'Our', 'their', 'Their', 'while', 'While', 'above', 'Above', 'both', 'Both', 'up', 'Up', 'to', 'To', 'ours', 'had', 'Had', 'she', 'She', 'all', 'All', 'no', 'No', 'when', 'When', 'at', 'At', 'any', 'Any', 'before', 'Before', 'them', 'Them', 'same', 'Same', 'and', 'And', 'been', 'Been', 'have', 'Have', 'in', 'In', 'will', 'Will', 'on', 'On', 'does', 'Does', 'then', 'Then', 'that', 'That', 'because', 'Because', 'what', 'What', 'over', 'Over', 'why', 'Why', 'so', 'So', 'did', 'Did', 'not', 'Not', 'now', 'Now', 'under', 'Under', 'he', 'He', 'you', 'You', 'herself', 'has', 'Has', 'just', 'Just', 'where', 'Where', 'too', 'Too', 'only', 'Only', 'myself', 'which', 'Which', 'those', 'Those', 'after', 'After', 'few', 'Few', 'whom', 'being', 'Being', 'if', 'If', 'theirs', 'my', 'My', 'against', 'Against', 'by', 'By', 'doing', 'Doing', 'it', 'It', 'how', 'How', 'further', 'Further', 'was', 'Was', 'than', 'Than'}
 
 PUNCT = {'—', '–', "'", ';', '-', ':', '"', ",", '`', 'a', '.', '!', ',', 'I', 'i', '”', '“', '/' '?', '-', 'A', '?'}
+
+DEBUG = False
+USE_SENT_WORDS_SENSES = True
 
 def main(args):
     dataset = read_dataset(args)
@@ -25,15 +28,40 @@ def main(args):
         preds = {k: [] for k in [x / 100.0 for x in range(50, 80, 2)]}
 
     for ex in tqdm(dataset):
+        if DEBUG:
+            print('gold', ex['gold'])
+            print("word ", ex['word'])
         all_word_senses = word_senses(embs, lemmatized_vocab, ex['word'])
         if len(all_word_senses) <= 1:
-            for k in preds:
-                preds[k].append(True)
-            continue
+            if DEBUG:
+                print("pred is TRUE becuase can't find senses")
+                import ipdb; ipdb.set_trace()
+            if USE_SENT_WORDS_SENSES:
+                word_senses_with_sent_words = []
+                sent1_word_senses = word_senses(embs, lemmatized_vocab, ex['sent1'][ex['sent1_word_loc']])
+                sent2_word_senses = word_senses(embs, lemmatized_vocab, ex['sent2'][ex['sent2_word_loc']])
+                for sense in [*all_word_senses, *sent1_word_senses, *sent2_word_senses]:
+                    if sense not in word_senses_with_sent_words:
+                        word_senses_with_sent_words.append(sense)
+                
+                # print('before: ', all_word_senses)
+                if sum([1 for sense in word_senses_with_sent_words if '_' in sense]) > 1:
+                    all_word_senses = [sense for sense in word_senses_with_sent_words if '_' in sense]
+                else:
+                    all_word_senses = word_senses_with_sent_words
+                # print('after: ', word_senses_with_sent_words)
+            
+            if len(all_word_senses) <= 1:
+                for k in preds:
+                    preds[k].append(True)
+                continue
 
         sense_per_sent1 = most_likely_sense_per_sent_words(embs, lemmatized_vocab, all_word_senses, ex['sent1'], ex['sent1_word_loc'])
         sense_per_sent2 = most_likely_sense_per_sent_words(embs, lemmatized_vocab, all_word_senses, ex['sent2'], ex['sent2_word_loc'])
         sim = similarity(np.array(embs[all_word_senses[sense_per_sent1]]), np.array(embs[all_word_senses[sense_per_sent2]]))
+        if DEBUG:
+            print(sim)
+            import ipdb; ipdb.set_trace()
         
         for k in preds:
             if k < sim:
@@ -54,6 +82,8 @@ def main(args):
         print('best_threshold: ', best_threshold)
 
 def most_likely_sense_per_sent_words(embs, lemmatized_vocab, all_word_senses, sent, word_position):
+    if DEBUG:
+        print(' '.join(sent))
     all_context_senses, all_context_embeddings = find_context_embeddings(embs, lemmatized_vocab, sent, word_position)
     all_sense_word_embs = [np.array(embs[w]) for w in all_word_senses]
 
@@ -64,10 +94,16 @@ def most_likely_sense_per_sent_words(embs, lemmatized_vocab, all_word_senses, se
         if len(similarity_with_context) == 0:
             return 0
         sim = sum(similarity_with_context)/len(similarity_with_context)
+        # if DEBUG:
+        #     max_sim_index = similarity_with_context.index(sim)
+        #     print(all_word_senses[i], all_context_senses[max_sim_index])
         
         if sim > most_likley_word_sense_similarity:
             most_likley_word_sense = i
             most_likley_word_sense_similarity = sim
+
+    if DEBUG:
+        print(all_word_senses[most_likley_word_sense])
 
     return most_likley_word_sense
 
