@@ -9,24 +9,24 @@ import numpy as np
 from numpy import dot
 from gensim.models import KeyedVectors
 
-STOPWORDS = ['ourselves', 'hers', 'between', 'Between', 'yourself', 'Yourself', 'but', 'But', 'again', 'Again', 'there', 'There', 'about', 'About', 'once', 'Once', 'during', 'During', 'out', 'Out', 'very', 'Very', 'having', 'Having', 'with', 'With', 'they', 'They', 'own', 'Own', 'an', 'An', 'be', 'Be', 'some', 'Some', 'for', 'For', 'do', 'Do', 'its', 'Its', 'yours', 'Yours', 'such', 'Such', 'into', 'Into', 'of', 'Of', 'most', 'Most', 'itself', 'other', 'Other', 'off', 'Off', 'is', 'Is', 'am', 'Am', 'or', 'Or', 'who', 'Who', 'as', 'As', 'from', 'From', 'him', 'Him', 'each', 'Each', 'the', 'The', 'themselves', 'until', 'Until', 'below', 'Below', 'are', 'Are', 'we', 'We', 'these', 'These', 'your', 'Your', 'his', 'His', 'through', 'Through', 'don', 'Don', 'nor', 'Nor', 'me', 'Me', 'were', 'Were', 'her', 'Her', 'more', 'More', 'himself', 'Himself', 'this', 'This', 'down', 'Down', 'should', 'Should', 'our', 'Our', 'their', 'Their', 'while', 'While', 'above', 'Above', 'both', 'Both', 'up', 'Up', 'to', 'To', 'ours', 'had', 'Had', 'she', 'She', 'all', 'All', 'no', 'No', 'when', 'When', 'at', 'At', 'any', 'Any', 'before', 'Before', 'them', 'Them', 'same', 'Same', 'and', 'And', 'been', 'Been', 'have', 'Have', 'in', 'In', 'will', 'Will', 'on', 'On', 'does', 'Does', 'then', 'Then', 'that', 'That', 'because', 'Because', 'what', 'What', 'over', 'Over', 'why', 'Why', 'so', 'So', 'did', 'Did', 'not', 'Not', 'now', 'Now', 'under', 'Under', 'he', 'He', 'you', 'You', 'herself', 'has', 'Has', 'just', 'Just', 'where', 'Where', 'too', 'Too', 'only', 'Only', 'myself', 'which', 'Which', 'those', 'Those', 'after', 'After', 'few', 'Few', 'whom', 'being', 'Being', 'if', 'If', 'theirs', 'my', 'My', 'against', 'Against', 'by', 'By', 'doing', 'Doing', 'it', 'It', 'how', 'How', 'further', 'Further', 'was', 'Was', 'here', 'Here', 'than', 'Than']
+STOPWORDS = {'ourselves', 'hers', 'between', 'Between', 'yourself', 'Yourself', 'but', 'But', 'again', 'Again', 'there', 'There', 'about', 'About', 'once', 'Once', 'during', 'During', 'very', 'Very', 'having', 'Having', 'with', 'With', 'they', 'They', 'own', 'Own', 'an', 'An', 'be', 'Be', 'some', 'Some', 'for', 'For', 'do', 'Do', 'its', 'Its', 'yours', 'Yours', 'such', 'Such', 'into', 'Into', 'of', 'Of', 'most', 'Most', 'itself', 'other', 'Other', 'off', 'Off', 'is', 'Is', 'am', 'Am', 'or', 'Or', 'who', 'Who', 'as', 'As', 'from', 'From', 'him', 'Him', 'each', 'Each', 'the', 'The', 'themselves', 'until', 'Until', 'below', 'Below', 'are', 'Are', 'we', 'We', 'these', 'These', 'your', 'Your', 'his', 'His', 'through', 'Through', 'don', 'Don', 'nor', 'Nor', 'me', 'Me', 'were', 'Were', 'her', 'Her', 'more', 'More', 'himself', 'Himself', 'this', 'This', 'down', 'Down', 'should', 'Should', 'our', 'Our', 'their', 'Their', 'while', 'While', 'above', 'Above', 'both', 'Both', 'up', 'Up', 'to', 'To', 'ours', 'had', 'Had', 'she', 'She', 'all', 'All', 'no', 'No', 'when', 'When', 'at', 'At', 'any', 'Any', 'before', 'Before', 'them', 'Them', 'same', 'Same', 'and', 'And', 'been', 'Been', 'have', 'Have', 'in', 'In', 'will', 'Will', 'on', 'On', 'does', 'Does', 'then', 'Then', 'that', 'That', 'because', 'Because', 'what', 'What', 'over', 'Over', 'why', 'Why', 'so', 'So', 'did', 'Did', 'not', 'Not', 'now', 'Now', 'under', 'Under', 'he', 'He', 'you', 'You', 'herself', 'has', 'Has', 'just', 'Just', 'where', 'Where', 'too', 'Too', 'only', 'Only', 'myself', 'which', 'Which', 'those', 'Those', 'after', 'After', 'few', 'Few', 'whom', 'being', 'Being', 'if', 'If', 'theirs', 'my', 'My', 'against', 'Against', 'by', 'By', 'doing', 'Doing', 'it', 'It', 'how', 'How', 'further', 'Further', 'was', 'Was', 'here', 'Here', 'than', 'Than'}
+
+PUNCT = {'—', '–', "'", ';', '-', ':', '"', ",", '`', 'a', '.', '!', ',', 'I', 'i', '”', '“', '/' '?', '-', 'A', '?'}
 
 def main(args):
     dataset = read_dataset(args)
     lemmatized_vocab = prepare_lemmatized_vocab(dataset, args.split)
 
     embs = KeyedVectors.load(str(args.word_embeddings), mmap='r')
-    
-    preds = {k: [] for k in [x / 100.0 for x in range(50, 80, 2)]}
+
+    if args.similarity_threshold:
+        preds = {args.similarity_threshold: []}
+    else:
+        preds = {k: [] for k in [x / 100.0 for x in range(50, 80, 2)]}
 
     for ex in tqdm(dataset):
         all_word_senses = word_senses(embs, lemmatized_vocab, ex['word'])
-        if len(all_word_senses) == 0:
-            for k in preds:
-                preds[k].append(True)
-            continue
-
-        if len(all_word_senses) == 1:
+        if len(all_word_senses) <= 1:
             for k in preds:
                 preds[k].append(True)
             continue
@@ -41,28 +41,17 @@ def main(args):
             else:
                 preds[k].append(False)
 
-
-        # if pred != ex['gold']:
-        #     import ipdb; ipdb.set_trace()
-        #     most_likely_sense_per_sent_words(embs, lemmatized_vocab, all_word_senses, ex['sent1'], ex['sent1_word_loc'])
-        #     most_likely_sense_per_sent_words(embs, lemmatized_vocab, all_word_senses, ex['sent2'], ex['sent2_word_loc'])
+    all_accuracies = {}
+    for threshold in preds:
+        print(f"Threshold {threshold}")
+        all_accuracies[threshold] = compare_preds_to_gold(args, preds[threshold], dataset)
 
     if args.split != 'test':
-        print('Need to re-write and add the threshold')
+        best = max(all_accuracies.values())
+        best_threshold = max(all_accuracies, key=all_accuracies.get)
 
-    all_accuracies = {}
-    for k in preds:
-        print(f"Threshold {k}")
-        all_accuracies[k] = compare_preds_to_gold(args, preds[k], dataset)
-        
-    best = max(all_accuracies.values())
-    best_threshold = max(all_accuracies, key=all_accuracies.get)
-
-    print()
-    print('best: ', best)
-    print('best_threshold: ', best_threshold)
-
-
+        print('\nbest: ', best)
+        print('best_threshold: ', best_threshold)
 
 def most_likely_sense_per_sent_words(embs, lemmatized_vocab, all_word_senses, sent, word_position):
     all_context_senses, all_context_embeddings = find_context_embeddings(embs, lemmatized_vocab, sent, word_position)
@@ -74,9 +63,7 @@ def most_likely_sense_per_sent_words(embs, lemmatized_vocab, all_word_senses, se
         similarity_with_context = [similarity(word_emb, context_word_embs) for context_word_embs in all_context_embeddings]
         if len(similarity_with_context) == 0:
             return 0
-        sim = max(similarity_with_context)
-        # max_sim_index = similarity_with_context.index(sim)
-        # all_context_senses[max_sim_index]
+        sim = sum(similarity_with_context)/len(similarity_with_context)
         
         if sim > most_likley_word_sense_similarity:
             most_likley_word_sense = i
@@ -92,18 +79,21 @@ def similarity(word_embs, sent_embs, norm=True):
 
 def find_context_embeddings(embs, lemmatized_vocab, sent, word_position):
     bow_without_word = sent[:word_position] + sent[word_position+1:]
-    bow_without_word_without_punct = [x for x in bow_without_word if len(x) > 1 and x not in STOPWORDS]
+    bow_without_word_without_punct = [x for x in bow_without_word if x not in PUNCT and x not in STOPWORDS]
     bow_with_senses = [word_senses(embs, lemmatized_vocab, w) for w in bow_without_word_without_punct]
     flat_bow_with_senses = [word_sense for word_senses in bow_with_senses for word_sense in word_senses]
     return flat_bow_with_senses, [np.array(embs[word_sense]) for word_sense in flat_bow_with_senses]
 
 def word_senses(embs, lemmatized_vocab, word):
-    def all_senses(w):
-        cands = [w, *[f"{w}_{i}" for i in range(4)]] # TODO MORE/LESS?
-        return [w for w in cands if w in embs]
+    def all_senses(word):
+        cands = [f"{word}_{i}" for i in range(10)]
+        ret = [w for w in cands if w in embs]
+        if len(ret) == 0 and word in embs:
+            ret = [word]
+        return ret
 
     ret = all_senses(word)
-    if word in lemmatized_vocab:
+    if word in lemmatized_vocab and lemmatized_vocab[word] != word:
         for w in all_senses(lemmatized_vocab[word]):
             if w not in ret:
                 ret.append(w)
@@ -168,6 +158,8 @@ def compare_preds_to_gold(args, preds, dataset):
                 else:
                     f.write('F\n')
 
+        return None
+
 def confusion_matrix(preds, gold):
     both_positives, both_negatives, false_positives, false_negatives = 0, 0, 0, 0
     for p, g in zip(preds, gold):
@@ -205,8 +197,7 @@ if __name__ == "__main__":
     parser.add_argument("--word_embeddings",
         type=Path,
         required=True)
-    # parser.add_argument("--similarity_threshold",
-    #     type=float,
-    #     default=0.99)
+    parser.add_argument("--similarity_threshold",
+        type=float)
     args = parser.parse_args()
     main(args)
