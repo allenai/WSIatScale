@@ -19,6 +19,8 @@ def main(args):
         scorer = SensefulW2VSimilarityScorer(args.model_path)
     elif 'nasari' in args.model_path.name:
         scorer = NASARISimilarityScorer(args.model_path)
+    elif 'deconf' in args.model_path.name:
+        scorer = DeConfimilarityScorer(args.model_path)
     else:
         scorer = W2VSimilarityScorer(args.model_path)
     print(f"Done initlizing scorer")
@@ -137,6 +139,22 @@ class NASARISimilarityScorer(SensefulW2VSimilarityScorer):
     def get_vector_with_fallback(self, key, norm):
         word = self.ids_to_word[key]
         vec = np.array(self.embs[word][key]['embs'])
+        if norm:
+            vec /= np.linalg.norm(vec)
+        return vec
+
+class DeConfimilarityScorer(SensefulW2VSimilarityScorer):
+    def __init__(self, model_path):
+        self.embs = json.load(open(model_path, 'r'))
+        self.ids_to_word = {id: word for word in self.embs for id in self.embs[word]}
+        self.opp = []
+
+    def word_senses(self, word):
+        return list(self.embs[word].keys())
+
+    def get_vector_with_fallback(self, key, norm):
+        word = self.ids_to_word[key]
+        vec = np.array(self.embs[word][key])
         if norm:
             vec /= np.linalg.norm(vec)
         return vec

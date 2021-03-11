@@ -9,7 +9,8 @@ from transformers import AutoTokenizer
 from xml.etree import ElementTree
 
 tokenizer_params = {'RoBERTa': 'roberta-large',
-                    'bert-large-uncased': 'bert-large-uncased',}
+                    'bert-large-uncased': 'bert-large-uncased',
+                    'bert-large-cased-whole-word-masking': 'bert-large-cased-whole-word-masking',}
 
 def main(data_dir, outdir, model, data_file):
 
@@ -48,7 +49,7 @@ def index(tokenizer, data_dir, outdir, model, doc_id_to_inst_id, inst_id_to_word
 
         inst_ids = [doc_id_to_inst_id[k] for k in doc_ids]
         lemmas = ['.'.join(k.split('.', 2)[:2]) for k in inst_ids]
-        words_to_index = [inst_id_to_word[k][0] for k in inst_ids]
+        words_to_index = [inst_id_to_word[k][0].lower() for k in inst_ids]
         which_targets = [inst_id_to_word[k][1] for k in inst_ids]
         if model == 'RoBERTa':
             lemmas = [f" {l}" for l in lemmas]
@@ -104,7 +105,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--data_dir", type=str)
     parser.add_argument("--outdir", type=str, default='inverted_index')
-    parser.add_argument("--model", type=str, choices=['RoBERTa', 'bert-large-uncased'])
+    parser.add_argument("--model", type=str, choices=['RoBERTa', 'bert-large-uncased', 'bert-large-cased-whole-word-masking'])
     parser.add_argument("--data_file", type=str)
 
     args = parser.parse_args()

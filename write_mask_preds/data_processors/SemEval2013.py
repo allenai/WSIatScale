@@ -72,7 +72,7 @@ class SemEval2013Processor(DataProcessor):
     def get_examples(self, data_dir, input_file):
         instance_ids_in_gold = self.peek_gold(data_dir)
 
-        xml_path = os.path.join(data_dir, input_file)
+        xml_path = data_dir
         with open(xml_path, encoding="utf-8") as xml_file:
             et_xml = ElementTree.parse(xml_file)
             for word in et_xml.getroot():
@@ -82,7 +82,7 @@ class SemEval2013Processor(DataProcessor):
                         context = inst.find("context")
                         before, target, after = list(context.itertext())
                         text = ''.join([before, target, after]).replace('  ', ' ')
-                        yield InputExample(guid=inst_id, text_a=text)
+                        yield InputExample(guid=inst_id, text_a=text.lower())
 
     @staticmethod
     def peek_gold(data_dir):

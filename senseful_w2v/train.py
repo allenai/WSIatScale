@@ -12,7 +12,9 @@ from gensim.models import Word2Vec
 from transformers import AutoTokenizer
 from tqdm import tqdm
 
-from utils.utils import tokenizer_params
+tokenizer_params = {'CORD-19': 'allenai/scibert_scivocab_uncased',
+                    'Wikipedia': 'bert-large-cased-whole-word-masking',}
+
 
 def main(args):
     model_hf_path = tokenizer_params[args.dataset]
@@ -40,7 +42,7 @@ def main(args):
                      epochs=args.epochs)
 
     word_vectors = model.wv
-    word_vectors.save(f"senseful_w2v/word_vectors/{args.dataset}/senseful_w2v.word_vectors-{args.epochs}epochs-{args.dims}dim-{args.alg}")
+    word_vectors.save(f"senseful_w2v/word_vectors/{args.dataset}/senseful_w2v.word_vectors-{args.name}-{args.epochs}epochs-{args.dims}dim-{args.alg}")
 
 class DatasetIterator:
     def __init__(self, data_dir, tokenizer, special_tokens, processed_sents_cache_dir):
@@ -118,9 +120,10 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=Path, required=True)
     parser.add_argument("--processed_sents_cache_dir", type=Path, required=True)
     # {data_dir}/aligned_sense_idx/processed_sents
-    parser.add_argument("--dataset", choices=['Wikipedia-BERT', 'CORD-19'], required=True)
+    parser.add_argument("--dataset", choices=['Wikipedia', 'CORD-19'], required=True)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--dims", type=int, default=100)
     parser.add_argument("--alg", type=str, choices=['CBOW', 'SG'], default='CBOW')
+    parser.add_argument("--name", type=str, default="")
     args = parser.parse_args()
     main(args)

@@ -123,7 +123,7 @@ if __name__ == "__main__":
     parser.add_argument("--write_index_by_word", action='store_true')
     parser.add_argument("--write_aligned_sense_idx", action='store_true')
     parser.add_argument("--run_specific_method", type=str, choices=['community_detection', 'clustering'], help="Only if we want specific method")
-    parser.add_argument("--run_specific_n_reps", type=str, choices=['5', '10', '20'], help="Only if we want specific n_reps")
+    parser.add_argument("--run_specific_n_reps", type=str, choices=['5', '20', '50'], help="Only if we want specific n_reps")
     args = parser.parse_args()
 
     assert args.write_index_by_word != args.write_aligned_sense_idx, "Choose one of --write_index_by_word --write_aligned_sense_idx"

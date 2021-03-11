@@ -21,7 +21,7 @@ python -m SemEval.evaluate --data_dir201x ... --n_reps ...
 
 ## SemEval 2013
 ```
-python write_mask_preds.py --data_dir ../../SemEval/resources/SemEval-2013-Task-13-test-data/contexts/senseval2-format/semeval-2013-task-13-test-data.senseval2.xml --out_dir /mnt/disks/mnt2/datasets/SemEval/SemEval2013/bert/ --dataset SemEval2013 --model bert-large-uncased --max_tokens_per_batch 512
+python write_mask_preds.py --data_dir ../../SemEval/resources/SemEval-2013-Task-13-test-data/contexts/senseval2-format/semeval-2013-task-13-test-data.senseval2.xml --out_dir /mnt/disks/mnt2/datasets/SemEval/SemEval2013/bert/ --dataset SemEval2013 --model bert-large-uncased --max_tokens_per_batch 512 --no_input_file
 ```
 Create Inverted Index
 ```
