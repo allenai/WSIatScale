@@ -1,4 +1,4 @@
-# QuickBERTInference
+# WSIatScale
 
 ## write_mask_preds/write_mask_preds.py Script
 
