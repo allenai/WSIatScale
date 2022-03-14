@@ -74,8 +74,8 @@ python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt1/datase
 ```
 
 
-# Quick Access For debugging
-```
-from transformers import AutoTokenizer; model_hf_path = 'bert-large-cased-whole-word-masking'; tok = AutoTokenizer.from_pretrained(model_hf_path, use_fast=True)
-tok.encode('bass', add_special_tokens=False)[0] == 2753
-```
+# Datasets
+
+Manual intrinsic evaluation can be found in `datasets` folder.
+
+Our Outlier detection dataset can be found in its [designated project](https://github.com/allenai/OutlierDetectionDataset).
