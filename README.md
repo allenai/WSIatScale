@@ -78,4 +78,4 @@ python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt1/datase
 
 Manual intrinsic evaluation can be found in `datasets` folder.
 
-Our Outlier detection dataset can be found in its [designated project](https://github.com/allenai/OutlierDetectionDataset).
+Our Outlier detection dataset can be found in its [designated project](https://github.com/mataney/OutlierDetectionDataset).
