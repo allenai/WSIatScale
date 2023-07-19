@@ -79,3 +79,17 @@ python -m WSIatScale.assign_clusters_to_tokens --data_dir /mnt/disks/mnt1/datase
 Manual intrinsic evaluation can be found in `datasets` folder.
 
 Our Outlier detection dataset can be found in its [designated project](https://github.com/mataney/OutlierDetectionDataset).
+
+# Senseful embeddings
+
+The senseful embeddings are available to download in this [link](https://drive.google.com/drive/folders/1377_9rC-II2SsbWQbSc9v915UB__6nGD?usp=sharing). For example, for the `senseful_w2v.word_vectors-10epochs` embeddings, please download both `senseful_w2v.word_vectors-10epochs` and `senseful_w2v.word_vectors-10epochs-100dim-SG.vectors.npy` files.
+
+Then read the embeddings in the following way:
+
+```
+import gensim
+print(gensim.__version__) # tested for gensim==4.3.1
+embs = gensim.models.KeyedVectors.load("/Users/matane/Downloads/senseful_w2v.word_vectors-10epochs-100dim-SG")
+print(embs["bass_0"])
+# array([-0.23907337, 0.13821346, -0.17623161, 0.576322, -0.58257973, ...], dtype=float32)
+```
